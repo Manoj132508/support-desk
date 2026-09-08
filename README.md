@@ -24,7 +24,7 @@ architectural property rather than a hope.
 
 ## Status
 
-**Phase 2 of 17 — architecture and decision records complete.** No application code yet. This
+**Phase 3 of 17 — design complete, implementation next.** No application code yet. This
 repository is public from Phase 1 on purpose, so CI runs during the build rather than after it.
 
 | Document | |
@@ -32,7 +32,8 @@ repository is public from Phase 1 on purpose, so CI runs during the build rather
 | [Project brief](docs/project-brief.md) | Why this project, and what it deliberately is not |
 | [Phase 1 — Requirements](docs/phases/phase-01-requirements.md) | Invariants, FRs, NFRs, success metrics, traceability |
 | [Phase 2 — Architecture](docs/phases/phase-02-architecture.md) | Component and trust view, request flows, failure modes |
-| [Decision records](docs/adr/README.md) | Seven ADRs — start with [0002](docs/adr/0002-llm-proposes-never-authorises.md) |
+| [Phase 3 — Database design](docs/phases/phase-03-database-design.md) | Eleven collections, the policy rule model, indexes, privacy |
+| [Decision records](docs/adr/README.md) | Eight ADRs — start with [0002](docs/adr/0002-llm-proposes-never-authorises.md) |
 
 ---
 
