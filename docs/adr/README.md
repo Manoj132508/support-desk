@@ -13,6 +13,11 @@ that were rejected and why.
 | [0005](0005-tenancy-by-query-shape.md) | Tenancy by query shape; 404 never 403 | Accepted | **INV-D** *(ported)* |
 | [0006](0006-append-only-audit-retains-refusals.md) | Append-only audit that retains refusals | Accepted | **INV-B** |
 | [0007](0007-two-channel-refusal-reasons.md) | Two-channel refusal reasons | Accepted | — |
+| [0008](0008-policy-rules-tenant-scoped-with-global-baseline.md) | Policy rules are tenant-scoped over a global baseline | Accepted | INV-A |
+
+ADRs 0003, 0004 and 0006 carry **amendments** added in Phase 3, where designing the schema
+surfaced errors in them. The amendments are appended to each ADR rather than edited into the
+original text, so the correction is visible.
 
 **Start with [0002](0002-llm-proposes-never-authorises.md).** It is the central decision of the
 project; every other ADR either supports it or is inherited from an earlier project.
