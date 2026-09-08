@@ -98,9 +98,29 @@ alongside.
 and it deletes the proof of the invariant. Rejected in favour of de-identification, with the
 trade-off stated openly rather than hidden.
 
+## Amendments
+
+**2026-09-08 (Phase 3) — two refinements from designing the fields.**
+
+**1. `ActionExecution` is renamed `ActionOutcome`**, for the reason given in
+[ADR 0003](0003-recheck-at-execution-and-idempotency.md#amendments): it records refusals too.
+
+**2. De-identification scrubs the `Customer` document; it never rewrites an audit row.** This
+ADR said audit records are "retained with the subject de-identified", which read as though the
+immutable rows would be edited — contradicting the immutability this same ADR requires. The
+actual mechanism: audit rows hold a `customerId` reference and **no free text**; deletion
+scrubs the `Customer` document in place, leaving an opaque id that resolves to a profile
+containing no personal data. The decision structure survives untouched and immutability is
+never violated.
+
+This forces a schema constraint worth stating plainly: **audit records store evidence
+*references*, never snippets.** A copied-in snippet would be free text inside an immutable row,
+which is precisely the thing that cannot later be scrubbed. See
+[Phase 3](../phases/phase-03-database-design.md) §7.
+
 ## Verified by
 
-- Test: `ActionProposal`, `ActionExecution`, `TicketEvent` reject every update path.
+- Test: `ActionProposal`, `ActionOutcome`, `TicketEvent` reject every update path.
 - Test: a proposal refused by policy is present in the audit query with its refusing rule.
 - Test: `GET /api/audit` includes refusals with no filter supplied.
 - Test: after de-identification the decision structure survives and the subject does not.

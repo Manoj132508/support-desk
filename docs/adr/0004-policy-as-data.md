@@ -97,6 +97,28 @@ than "the invariant holds because these forty lines are correct and here are the
 **Rules expressed as prompts.** Explicitly rejected — it is the failure ADR 0002 exists to
 prevent, wearing a configuration hat.
 
+## Amendments
+
+**2026-09-08 (Phase 3) — the three tiers become a four-outcome ladder.** This ADR described a
+`decision` plus a `tier` of `auto-execute` / `confirm-required` / `agent-only`. Writing the
+`PolicyRule` schema showed the two fields were really one, and that a distinction was missing:
+`agent-only` ("the assistant may not, a human may") is not the same as `refuse` ("this must not
+happen at all" — cancelling a delivered order). Both stop the assistant, but they give the
+agent console entirely different affordances, and collapsing them would tell an agent they may
+do something they may not.
+
+The rule outcome is therefore a single ordered field, most permissive first:
+
+```
+auto-execute  <  confirm-required  <  agent-only  <  refuse
+```
+
+"Deny by default" is unchanged and still resolves to `agent-only` — an unanticipated situation
+warrants a human, not a dead end. "More restrictive wins" is now literally *later in this list
+wins*, which is what makes [ADR 0008](0008-policy-rules-tenant-scoped-with-global-baseline.md)'s
+baseline layering safe without a special case. See
+[Phase 3](../phases/phase-03-database-design.md) §5.
+
 ## Verified by
 
 - Policy eval golden set, gating CI: unauthorised-action rate 0, over-block rate reported.

@@ -105,6 +105,16 @@ not be able to affect the world before authorisation, and a lock is an effect.
 the key would be attacker-controlled, and deriving it from the proposal expresses the actual
 rule — *one proposal, one execution* — more directly than trusting a client-supplied string.
 
+## Amendments
+
+**2026-09-08 (Phase 3) — the collection is named `ActionOutcome`, not `ActionExecution`.**
+Designing the fields showed that this record is written for *every* terminal state of a
+proposal, including ones that never executed — refused at proposal, rejected by the customer,
+refused at execution. A collection called `ActionExecution` in which most rows are not
+executions misleads every future reader, and the audit log's whole purpose is to be read
+correctly. The decision in this ADR is unchanged; only the name is. See
+[Phase 3](../phases/phase-03-database-design.md) §4.
+
 ## Verified by
 
 - Test: confirming the same proposal twice cancels the order once; the second call returns the
