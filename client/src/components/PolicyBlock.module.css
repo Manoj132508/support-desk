@@ -1,0 +1,110 @@
+.block {
+  border: 1px solid;
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+/*
+ * The two visual languages of Phase 4 section 5.
+ *
+ * They differ in border, icon and copy as well as hue -- colour is never the
+ * sole carrier of the distinction (NFR-8). A user with a colour vision
+ * deficiency still sees a different icon and a different heading.
+ */
+.policy {
+  background: var(--color-policy-subtle);
+  border-color: var(--color-policy-border);
+  border-left-color: var(--color-policy);
+  color: var(--color-text);
+}
+
+.fault {
+  background: var(--color-warn-subtle);
+  border-color: var(--color-warn);
+  border-left-color: var(--color-warn);
+  color: var(--color-text);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.policy .icon { background: var(--color-policy); }
+.fault .icon { background: var(--color-warn); }
+
+.heading {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.policy .heading { color: var(--color-policy); }
+.fault .heading { color: var(--color-warn); }
+
+.message {
+  margin: 0;
+}
+
+.alternative {
+  margin: var(--space-2) 0 0;
+  color: var(--color-muted);
+}
+
+/* Internal detail: visually subordinate to the customer-facing message, so an
+   agent reads the human sentence first and the rule reference second. */
+.detail {
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--color-policy-border);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  display: grid;
+  gap: var(--space-1);
+}
+
+.detail > div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.detail dt {
+  font-weight: 500;
+  min-width: 64px;
+}
+
+.detail dd {
+  margin: 0;
+}
+
+.detail code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.actions {
+  margin-top: var(--space-3);
+  display: flex;
+  gap: var(--space-2);
+}
+
+.actions:empty {
+  display: none;
+}
