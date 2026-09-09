@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { withServer, call } from './helpers.js';
-import { CONTRACT_ROUTES } from '../src/routes/index.js';
+import { CONTRACT_ROUTES, PUBLIC_ROUTES } from '../src/routes/index.js';
 import { AppError, KIND } from '../src/errors/AppError.js';
 
 /**
@@ -23,13 +23,53 @@ test('every route in the contract is mounted', async () => {
   });
 });
 
-test('an unbuilt route returns a shaped 501 naming its phase', async () => {
+test('an unbuilt route returns a shaped 501 naming its phase', () => {
+  // Asserted directly as of Phase 8: every remaining unbuilt route now sits
+  // behind `authenticate`, so an unauthenticated call correctly answers 401
+  // before it can reach the 501. The end-to-end version of this returns when
+  // there is a session to make (Phase 10).
+  const error = AppError.notImplemented('Phase 11');
+  assert.equal(error.status, 501);
+  assert.equal(error.kind, KIND.FAULT);
+  assert.match(error.message, /Phase 11/);
+});
+
+test('PHASE 8: every non-public route answers 401 without a session', async () => {
+  // The access-control design is positional -- everything declared below the
+  // `authenticate` line in routes/index.js inherits protection. This asserts
+  // the positions rather than trusting a reviewer to eyeball middleware order,
+  // and it is what makes "protected by default" a checkable claim.
+  const publicSet = new Set(PUBLIC_ROUTES.map(([m, p]) => `${m} ${p}`));
+
   await withServer(async (base) => {
-    const { status, body } = await call(base, '/api/auth/login', { method: 'POST' });
-    assert.equal(status, 501);
-    assert.equal(body.kind, KIND.FAULT);
-    assert.match(body.message, /Phase 8/);
-    assert.ok(body.correlationId);
+    for (const [method, path] of CONTRACT_ROUTES) {
+      if (publicSet.has(`${method} ${path}`)) continue;
+
+      const { status } = await call(base, path, { method: method.toUpperCase() });
+      assert.equal(
+        status,
+        401,
+        `${method.toUpperCase()} ${path} must require a session, got ${status}`,
+      );
+    }
+  });
+});
+
+test('the public route list is short and deliberate', () => {
+  // Health, so a load balancer can reach it; register and login, because the
+  // CSRF cookie they need is set BY them; logout, so a stale cookie can always
+  // be cleared. Nothing else -- notably not /api/auth/me, which is the question
+  // "who am I?" and therefore needs a session to answer.
+  assert.deepEqual(
+    PUBLIC_ROUTES.map(([, path]) => path).sort(),
+    ['/api/auth/login', '/api/auth/logout', '/api/auth/register', '/api/health'],
+  );
+});
+
+test('GET /api/auth/me requires a session', async () => {
+  await withServer(async (base) => {
+    const { status } = await call(base, '/api/auth/me');
+    assert.equal(status, 401);
   });
 });
 
@@ -42,10 +82,20 @@ test('every error carries the full envelope', async () => {
   });
 });
 
+test('an unknown /api path answers 401, not 404, so route existence is not enumerable', async () => {
+  // A side effect of the Phase 8 middleware order, and a welcome one: an
+  // unauthenticated caller cannot map the API surface by probing for 404s.
+  await withServer(async (base) => {
+    const { status } = await call(base, '/api/definitely-not-a-route');
+    assert.equal(status, 401);
+  });
+});
+
 test('INV-D: 404 bodies are identical regardless of what was asked for', async () => {
   await withServer(async (base) => {
-    const a = await call(base, '/api/definitely-not-a-route');
-    const b = await call(base, '/api/another-missing-thing');
+    // Outside /api, so these reach the 404 handler rather than `authenticate`.
+    const a = await call(base, '/definitely-not-a-route');
+    const b = await call(base, '/another-missing-thing');
 
     assert.equal(a.status, 404);
     assert.equal(b.status, 404);
