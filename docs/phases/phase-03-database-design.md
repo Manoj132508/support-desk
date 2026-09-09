@@ -145,6 +145,7 @@ ActionOutcome {                          // IMMUTABLE — one per proposal, term
 | `refused_at_proposal` | Policy said no before the customer saw anything | no |
 | `escalated_at_proposal` | `agent-only` — handed to a human | no |
 | `rejected_by_customer` | Confirmation declined | no |
+| `expired` | Never decided; swept by the hygiene job *(added in [Phase 4](phase-04-ui-ux.md) — dismissing a confirmation leaves the proposal pending, so "not decided" needed a terminal state distinct from "declined")* | no |
 | `refused_at_execution` | Authorised, then no longer valid (ADR 0003) | no |
 | `executed` | Done | **yes** |
 | `failed` | Attempted, errored, rolled back | no |
