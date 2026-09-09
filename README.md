@@ -24,15 +24,15 @@ architectural property rather than a hope.
 
 ## Status
 
-**Phase 7 of 17 — data layer built.** 102 tests pass across two suites, and CI runs both on
-every push. This repository is public from Phase 1 on purpose, so CI runs
+**Phase 8 of 17 — authentication built.** 136 tests pass across two suites, and CI runs both
+on every push. This repository is public from Phase 1 on purpose, so CI runs
 during the build rather than after it.
 
 ### Running it
 
-Requires Node 22+. Auth arrives in Phase 8, so the sign-in screen renders but cannot yet
-authenticate; every API route is mounted and correctly shaped, returning `501` with the phase
-that builds it.
+Requires Node 22+. Signing in needs a database (set `MONGODB_URI`); without one the client and
+API still start, and every route beyond auth is mounted, protected, and returns `501` naming
+the phase that builds it.
 
 ```bash
 npm --prefix client install
@@ -46,7 +46,7 @@ npm --prefix server run dev     # http://localhost:4400
 
 ```bash
 npm --prefix client test        # 39 tests
-npm --prefix server test        # 63 tests
+npm --prefix server test        # 97 tests
 ```
 
 Copy `.env.example` to `server/.env` and set `MONGODB_URI` to run against a real database; with
@@ -67,6 +67,7 @@ standalone `mongod` cannot do that. A local replica-set fallback is documented i
 | [Phase 5 — Frontend foundation](docs/phases/phase-05-frontend-foundation.md) | What was ported, what is new, the 39 tests, CI |
 | [Phase 6 — API contract](docs/phases/phase-06-api-contract.md) | Endpoints, the error envelope, status mapping, SSE frames |
 | [Phase 7 — Database integration](docs/phases/phase-07-database-integration.md) | Eleven models, append-only enforcement, tenancy in the query |
+| [Phase 8 — Authentication](docs/phases/phase-08-authentication.md) | Ported session auth, CSRF, roles, and default-on route protection |
 | [Decision records](docs/adr/README.md) | Nine ADRs — start with [0002](docs/adr/0002-llm-proposes-never-authorises.md) |
 
 ---
