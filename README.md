@@ -24,8 +24,26 @@ architectural property rather than a hope.
 
 ## Status
 
-**Phase 4 of 17 — design complete, implementation next.** No application code yet. This
-repository is public from Phase 1 on purpose, so CI runs during the build rather than after it.
+**Phase 5 of 17 — frontend foundation running.** The client builds, 39 tests pass, and CI runs
+on every push. This repository is public from Phase 1 on purpose, so CI runs during the build
+rather than after it.
+
+### Running the client
+
+Requires Node 22+. The API does not exist until Phase 6, so the sign-in screen renders but
+cannot authenticate yet.
+
+```bash
+npm --prefix client install
+npm --prefix client run dev     # http://localhost:5179
+npm --prefix client test
+```
+
+Copy `.env.example` to `.env` before Phase 6. The database is **MongoDB Atlas free tier** —
+Atlas clusters are replica sets by default, which this project requires: execution commits the
+order update, the audit record and the ticket event in one multi-document transaction, and a
+standalone `mongod` cannot do that. A local replica-set fallback is documented in
+`.env.example`.
 
 | Document | |
 |---|---|
@@ -34,6 +52,7 @@ repository is public from Phase 1 on purpose, so CI runs during the build rather
 | [Phase 2 — Architecture](docs/phases/phase-02-architecture.md) | Component and trust view, request flows, failure modes |
 | [Phase 3 — Database design](docs/phases/phase-03-database-design.md) | Eleven collections, the policy rule model, indexes, privacy |
 | [Phase 4 — UI/UX](docs/phases/phase-04-ui-ux.md) | Screens, the confirmation surface, error affordances, accessibility |
+| [Phase 5 — Frontend foundation](docs/phases/phase-05-frontend-foundation.md) | What was ported, what is new, the 39 tests, CI |
 | [Decision records](docs/adr/README.md) | Nine ADRs — start with [0002](docs/adr/0002-llm-proposes-never-authorises.md) |
 
 ---
