@@ -24,8 +24,8 @@ architectural property rather than a hope.
 
 ## Status
 
-**Phase 6 of 17 — client and API contract both running.** 57 tests pass across two suites, and
-CI runs both on every push. This repository is public from Phase 1 on purpose, so CI runs
+**Phase 7 of 17 — data layer built.** 102 tests pass across two suites, and CI runs both on
+every push. This repository is public from Phase 1 on purpose, so CI runs
 during the build rather than after it.
 
 ### Running it
@@ -46,10 +46,12 @@ npm --prefix server run dev     # http://localhost:4400
 
 ```bash
 npm --prefix client test        # 39 tests
-npm --prefix server test        # 18 tests
+npm --prefix server test        # 63 tests
 ```
 
-Copy `.env.example` to `.env` before Phase 6. The database is **MongoDB Atlas free tier** —
+Copy `.env.example` to `server/.env` and set `MONGODB_URI` to run against a real database; with
+it unset the API still starts and `/api/health` reports `database: "unconfigured"`. The database
+is **MongoDB Atlas free tier** —
 Atlas clusters are replica sets by default, which this project requires: execution commits the
 order update, the audit record and the ticket event in one multi-document transaction, and a
 standalone `mongod` cannot do that. A local replica-set fallback is documented in
@@ -64,6 +66,7 @@ standalone `mongod` cannot do that. A local replica-set fallback is documented i
 | [Phase 4 — UI/UX](docs/phases/phase-04-ui-ux.md) | Screens, the confirmation surface, error affordances, accessibility |
 | [Phase 5 — Frontend foundation](docs/phases/phase-05-frontend-foundation.md) | What was ported, what is new, the 39 tests, CI |
 | [Phase 6 — API contract](docs/phases/phase-06-api-contract.md) | Endpoints, the error envelope, status mapping, SSE frames |
+| [Phase 7 — Database integration](docs/phases/phase-07-database-integration.md) | Eleven models, append-only enforcement, tenancy in the query |
 | [Decision records](docs/adr/README.md) | Nine ADRs — start with [0002](docs/adr/0002-llm-proposes-never-authorises.md) |
 
 ---
