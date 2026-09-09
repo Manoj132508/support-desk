@@ -24,19 +24,29 @@ architectural property rather than a hope.
 
 ## Status
 
-**Phase 5 of 17 — frontend foundation running.** The client builds, 39 tests pass, and CI runs
-on every push. This repository is public from Phase 1 on purpose, so CI runs during the build
-rather than after it.
+**Phase 6 of 17 — client and API contract both running.** 57 tests pass across two suites, and
+CI runs both on every push. This repository is public from Phase 1 on purpose, so CI runs
+during the build rather than after it.
 
-### Running the client
+### Running it
 
-Requires Node 22+. The API does not exist until Phase 6, so the sign-in screen renders but
-cannot authenticate yet.
+Requires Node 22+. Auth arrives in Phase 8, so the sign-in screen renders but cannot yet
+authenticate; every API route is mounted and correctly shaped, returning `501` with the phase
+that builds it.
 
 ```bash
 npm --prefix client install
+npm --prefix server install
+```
+
+```bash
 npm --prefix client run dev     # http://localhost:5179
-npm --prefix client test
+npm --prefix server run dev     # http://localhost:4400
+```
+
+```bash
+npm --prefix client test        # 39 tests
+npm --prefix server test        # 18 tests
 ```
 
 Copy `.env.example` to `.env` before Phase 6. The database is **MongoDB Atlas free tier** —
@@ -53,6 +63,7 @@ standalone `mongod` cannot do that. A local replica-set fallback is documented i
 | [Phase 3 — Database design](docs/phases/phase-03-database-design.md) | Eleven collections, the policy rule model, indexes, privacy |
 | [Phase 4 — UI/UX](docs/phases/phase-04-ui-ux.md) | Screens, the confirmation surface, error affordances, accessibility |
 | [Phase 5 — Frontend foundation](docs/phases/phase-05-frontend-foundation.md) | What was ported, what is new, the 39 tests, CI |
+| [Phase 6 — API contract](docs/phases/phase-06-api-contract.md) | Endpoints, the error envelope, status mapping, SSE frames |
 | [Decision records](docs/adr/README.md) | Nine ADRs — start with [0002](docs/adr/0002-llm-proposes-never-authorises.md) |
 
 ---
