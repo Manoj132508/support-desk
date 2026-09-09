@@ -16,6 +16,17 @@ export const config = {
   mongodbUri: process.env.MONGODB_URI ?? '',
   jwtSecret: process.env.JWT_SECRET ?? '',
 
+  /**
+   * Short by design. A JWT cannot be revoked before it expires, so the
+   * lifetime IS the revocation window -- the shorter it is, the less a stolen
+   * token is worth. Twelve hours covers a working day without a re-login.
+   */
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '12h',
+  jwtExpiresMs: 12 * 60 * 60 * 1000,
+
+  /** bcrypt cost. 12 is the common recommendation; OWASP's floor is 10. */
+  bcryptRounds: Number(process.env.BCRYPT_ROUNDS ?? 12),
+
   clientOrigin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5179',
   aiServiceUrl: process.env.AI_SERVICE_URL ?? '',
 

@@ -47,7 +47,15 @@ const userSchema = new Schema(
   {
     tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
     email: { type: String, required: true, lowercase: true, trim: true },
-    passwordHash: { type: String, required: true },
+    /**
+     * `select: false` — excluded from every query unless asked for explicitly.
+     *
+     * The default is the protection. Without it, every `findOne` in the system
+     * carries a password hash it does not need, and one careless `res.json(user)`
+     * puts it on the wire. Login opts in with `.select('+passwordHash')`; nothing
+     * else does.
+     */
+    passwordHash: { type: String, required: true, select: false },
     name: { type: String, trim: true },
     role: { type: String, enum: ROLES, required: true },
     // Set only for role 'customer'. The split between authentication and the
