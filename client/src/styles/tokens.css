@@ -1,0 +1,140 @@
+/*
+ * Design tokens.
+ *
+ * PORTED FROM PROJECT 2 (ai-career-platform), not redesigned. The neutrals,
+ * accent, spacing, type scale and shadows below are that project's tokens
+ * unchanged. The third product in a series looking like the second is a
+ * feature, not laziness -- see Phase 4 section 9.
+ *
+ * What is NEW here is the bottom half: the POLICY palette and the OUTCOME
+ * palette. Those exist because this project has a semantic distinction the
+ * previous two did not, and Phase 4 section 5 turns on it:
+ *
+ *   A REFUSAL IS NOT AN ERROR.
+ *
+ * If a policy refusal renders in the same red as a database outage, users
+ * learn the assistant is broken, agents learn to dismiss refusals, and the
+ * demonstration this whole project exists for disappears into an error state.
+ * So `--color-policy` is deliberately its own hue: not the accent (which means
+ * "act"), and emphatically not `--color-warn` (which means "something broke").
+ */
+:root {
+  /* Surfaces and text — cool slate, low chroma. Ported. */
+  --color-bg: #f6f8fa;
+  --color-surface: #ffffff;
+  --color-surface-alt: #eef2f6;
+  --color-border: #d9e0e7;
+  --color-text: #161d26;
+  --color-muted: #59636e;
+
+  /* Accent — trustworthy blue-teal. Ported. */
+  --color-accent: #0e7490;
+  --color-accent-hover: #0b5a70;
+  --color-accent-subtle: #e6f3f6;
+
+  /* WARN / destructive — the only red in the system. Ported.
+     Red means "stop" or "broken". It never means "policy said no". */
+  --color-warn: #c0392b;
+  --color-warn-subtle: #fbecea;
+  --color-success: #2e7d5b;
+  --color-success-subtle: #e8f3ee;
+
+  /* ── NEW: POLICY palette ───────────────────────────────────────────────
+     A calm violet. Chosen because it is unmistakably neither the teal accent
+     nor the red warn colour, so a policy block cannot be misread as either
+     "here is an action" or "something is broken". A limit, stated calmly. */
+  --color-policy: #5b53c4;
+  --color-policy-hover: #4a43a8;
+  --color-policy-subtle: #eeedfa;
+  --color-policy-border: #c9c5ee;
+
+  /* ── NEW: OUTCOME palette ──────────────────────────────────────────────
+     One colour per terminal outcome from Phase 3 section 4. Note that only
+     `failed` is red: every other non-execution is a working system declining
+     to act, which is information rather than breakage. */
+  --outcome-executed: #2e7d5b;
+  --outcome-refused: #5b53c4;
+  --outcome-escalated: #0e7490;
+  --outcome-rejected: #6b7580;
+  --outcome-expired: #8a94a0;
+  --outcome-failed: #c0392b;
+
+  /* Ticket lifecycle — mirrors the state machine in FR-9.1. */
+  --ticket-open: #b0741a;
+  --ticket-assigned: #0e7490;
+  --ticket-waiting: #6b7580;
+  --ticket-resolved: #2e7d5b;
+  --ticket-closed: #59636e;
+
+  /* Spacing — fixed 8px-ish rhythm. Ported. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 32px;
+  --space-6: 48px;
+
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --line-height: 1.6;
+
+  --shadow-sm: 0 1px 2px rgba(22, 29, 38, 0.05);
+  --shadow-md: 0 4px 14px rgba(22, 29, 38, 0.09);
+
+  --header-height: 56px;
+
+  /* ── NEW: agent console layout (Phase 4 section 6) ─────────────────── */
+  --queue-width: 260px;
+  --context-width: 340px;
+}
+
+/* Dark theme: redefine only the tokens. Guarded so an explicit light choice
+   would still win over a dark OS setting. Ported, with the new palettes
+   extended to match. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #0f151b;
+    --color-surface: #161f28;
+    --color-surface-alt: #1c2731;
+    --color-border: #29343f;
+    --color-text: #e6ebf0;
+    --color-muted: #97a2ad;
+
+    --color-accent: #22a7c4;
+    --color-accent-hover: #3bbcd8;
+    --color-accent-subtle: rgba(34, 167, 196, 0.14);
+
+    --color-warn: #e5675a;
+    --color-warn-subtle: rgba(229, 103, 90, 0.15);
+    --color-success: #4fb489;
+    --color-success-subtle: rgba(79, 180, 137, 0.15);
+
+    --color-policy: #9d95f0;
+    --color-policy-hover: #b3abf7;
+    --color-policy-subtle: rgba(157, 149, 240, 0.15);
+    --color-policy-border: rgba(157, 149, 240, 0.35);
+
+    --outcome-executed: #4fb489;
+    --outcome-refused: #9d95f0;
+    --outcome-escalated: #22a7c4;
+    --outcome-rejected: #8a94a0;
+    --outcome-expired: #6b7580;
+    --outcome-failed: #e5675a;
+
+    --ticket-open: #e0a63c;
+    --ticket-assigned: #22a7c4;
+    --ticket-waiting: #8a94a0;
+    --ticket-resolved: #4fb489;
+    --ticket-closed: #97a2ad;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+  }
+}

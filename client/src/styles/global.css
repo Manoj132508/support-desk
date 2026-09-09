@@ -1,0 +1,93 @@
+/* Loaded after Bootstrap so these rules win. Bootstrap supplies the grid,
+   utilities and reset; this layer applies our tokens on top. Ported from
+   Project 2. */
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height);
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Accessibility: a visible focus ring on keyboard navigation only.
+ * :focus-visible (rather than :focus) means mouse users do not see a ring on
+ * click, while keyboard users always do. Never replace this with `outline: none`
+ * -- that makes the app unusable without a mouse, and NFR-8 requires the
+ * confirmation dialog in particular to be fully operable from the keyboard.
+ */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Visually hidden but available to screen readers.
+   Used for the streaming STATUS region -- see Phase 4 section 8. We announce
+   "Assistant is responding" / "Response complete", never the token stream
+   itself, because piping tokens into a live region as they arrive is
+   continuous interruption and unusable. Announce the state, not the stream. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Respect the OS "reduce motion" setting. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.app-header__brand {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.app-main {
+  flex: 1;
+  padding: var(--space-4);
+}
+
+.scaffold-page {
+  max-width: 900px;
+}
+
+.scaffold-page h1 {
+  font-size: var(--font-size-xl);
+  margin-bottom: var(--space-2);
+}
+
+.scaffold-page p {
+  color: var(--color-muted);
+}
