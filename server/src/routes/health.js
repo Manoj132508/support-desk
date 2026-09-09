@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { config } from '../config/env.js';
+import { databaseState } from '../db/connect.js';
 
 export const healthRouter = Router();
 
@@ -21,10 +22,11 @@ export const healthRouter = Router();
  * minutes of every incident.
  */
 healthRouter.get('/health', (req, res) => {
-  // Phase 7 replaces these with real probes. Until then the honest answer is
-  // that nothing has been checked, and reporting "ok" would be a lie that only
-  // gets discovered during an incident.
-  const database = config.mongodbUri ? 'unreachable' : 'unconfigured';
+  // The database probe is real as of Phase 7 -- it reports the live connection
+  // state. The AI service probe is still a placeholder; Phase 9 builds the
+  // service, and reporting "ok" for something never checked would be a lie
+  // that only surfaces during an incident.
+  const database = databaseState();
   const aiService = config.aiServiceUrl ? 'unreachable' : 'unconfigured';
 
   const checks = { api: 'ok', database, aiService };
