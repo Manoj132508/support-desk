@@ -35,6 +35,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * These two names are a CONTRACT WITH THE SERVER, which sets the cookie in
+ * `server/src/auth/cookies.js`. They are constants here rather than inline
+ * strings because a mismatch does not fail loudly — the header is simply
+ * absent, and every write fails CSRF for a reason that looks nothing like a
+ * naming problem. (It happened: the client read `csrfToken` while the server
+ * set `asd_csrf`.)
+ */
+export const CSRF_COOKIE = 'asd_csrf';
+export const CSRF_HEADER = 'X-CSRF-Token';
+
 function readCookie(name) {
   const match = document.cookie.match(
     new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'),
@@ -43,8 +54,8 @@ function readCookie(name) {
 }
 
 export function csrfHeaders() {
-  const token = readCookie('csrfToken');
-  return token ? { 'X-CSRF-Token': token } : {};
+  const token = readCookie(CSRF_COOKIE);
+  return token ? { [CSRF_HEADER]: token } : {};
 }
 
 /**
