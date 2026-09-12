@@ -1,0 +1,18 @@
+# The subset needed to RUN THE TEST SUITE, which is deliberately smaller than
+# requirements.txt.
+#
+# Nothing in the suite needs a model. `retrieve()` takes an Embedder protocol
+# and `stream_answer` takes a Generator protocol, so the tests inject
+# deterministic fakes and assert on the decisions and the prompt -- which is
+# where the logic lives. sentence-transformers and chromadb are imported
+# lazily, inside constructors, so importing any module here costs nothing.
+#
+# The trade is stated plainly: CI proves the pipeline's logic in seconds. It
+# does not prove that a real model embeds these documents usefully. That is an
+# integration concern, and Phase 13's eval is where it is measured.
+
+fastapi==0.141.1
+pydantic==2.13.4
+pydantic-settings==2.15.0
+httpx==0.28.1
+pytest==8.3.4

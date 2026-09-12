@@ -1,0 +1,180 @@
+"""FastAPI app. The advisory tier, and nothing more.
+
+Read the route list and note what is missing: there is no endpoint that
+changes anything. That is not because those endpoints are unwritten -- it is
+ADR 0002. Express owns everything with consequences; this process answers
+questions and proposes, and is not publicly routable.
+"""
+
+from __future__ import annotations
+
+import json
+import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from app.config import settings
+from app.pipeline.generator import Generator, OllamaGenerator
+from app.pipeline.loader import load_kb
+from app.service import plan_turn, stream_answer
+
+state: dict = {"embedder": None, "store": None, "generator": None}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Builds the heavy objects once, at startup.
+
+    Constructing the embedder per request would reload a transformer model
+    every time. It is also where the two-gigabyte import actually happens --
+    deferred to here so that importing this module (as the tests do) costs
+    nothing.
+    """
+    if state["embedder"] is None:
+        from app.pipeline.embedder import SentenceTransformerEmbedder  # noqa: PLC0415
+        from app.pipeline.vector_store import ChromaVectorStore  # noqa: PLC0415
+
+        state["embedder"] = SentenceTransformerEmbedder()
+        state["store"] = ChromaVectorStore(settings.index_path)
+    if state["generator"] is None:
+        state["generator"] = OllamaGenerator()
+    yield
+
+
+app = FastAPI(title="AI Support Desk — advisory service", lifespan=lifespan)
+
+
+def require_service_token(x_service_token: str = Header(default="")) -> None:
+    """Refuses calls that did not come from the API tier.
+
+    This is defence in depth, not the boundary. The real protection is that
+    this process is not publicly routable (ADR 0001). But "not routable" is a
+    deployment property, and deployment properties get changed by someone in a
+    hurry -- so the service also declines to answer strangers.
+
+    `compare_digest` rather than `==`: a naive comparison returns early on the
+    first differing byte, which leaks the token a character at a time to anyone
+    patient enough to measure.
+    """
+    if not settings.service_token:
+        return  # unset in development; the dev ports are localhost-only
+    if not secrets.compare_digest(x_service_token, settings.service_token):
+        raise HTTPException(status_code=401, detail="service token required")
+
+
+@app.get("/health")
+def health() -> dict:
+    """Reports each dependency independently, matching the API tier's shape."""
+    indexed = None
+    if state["store"] is not None:
+        try:
+            indexed = state["store"].count(settings.collection)
+        except Exception:  # noqa: BLE001 - health must never raise
+            indexed = None
+
+    return {
+        "status": "ok" if state["embedder"] is not None else "starting",
+        "model": settings.model,
+        "collection": settings.collection,
+        "indexed_chunks": indexed,
+    }
+
+
+class TurnRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    history: list[dict] = Field(default_factory=list)
+    correlation_id: str | None = None
+
+
+@app.post("/turn", dependencies=[Depends(require_service_token)])
+async def turn(request: TurnRequest) -> StreamingResponse:
+    """Streams one advisory turn as SSE.
+
+    The frame names match the Phase 6 contract exactly, because Express relays
+    them to the browser rather than re-encoding them, and the client's
+    `parseFrames` already expects these names.
+
+    `evidence` frames carry references, never snippets (ADR 0006 amendment).
+    A `policy` frame is NOT an error frame -- errors carry only faults, and
+    sending a refusal as an error would push it into the client's fault
+    language and undo Phase 4 section 5.
+    """
+    plan = plan_turn(
+        question=request.question,
+        history=request.history,
+        embedder=state["embedder"],
+        store=state["store"],
+    )
+
+    async def frames() -> AsyncIterator[str]:
+        for citation in plan.citations:
+            yield sse(
+                "evidence",
+                {
+                    "kind": "kb_chunk",
+                    "ref": citation.chunk_id,
+                    "n": citation.n,
+                    "documentName": citation.document_name,
+                    "section": citation.section,
+                    "score": round(citation.score, 4),
+                },
+            )
+
+        async for token in stream_answer(plan, state["generator"]):
+            yield sse("token", token)
+
+        yield sse(
+            "done",
+            {
+                "grounded": plan.grounded,
+                "shouldEscalate": plan.should_escalate,
+                "topScore": plan.top_score,
+            },
+        )
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+class IngestRequest(BaseModel):
+    path: str | None = None
+
+
+@app.post("/ingest", dependencies=[Depends(require_service_token)])
+def ingest(request: IngestRequest) -> dict:
+    """Re-indexes the help centre. Idempotent by construction.
+
+    Chunk ids are deterministic (`{document_id}:{index}`), so re-ingesting
+    unchanged content upserts the same ids over themselves rather than
+    accumulating duplicates. That is the property the chunker's determinism
+    exists to provide, and it is why re-indexing is safe to run on deploy.
+    """
+    directory = Path(request.path or settings.kb_path)
+    chunks = load_kb(
+        directory, chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap
+    )
+    if not chunks:
+        return {"documents": 0, "chunks": 0}
+
+    embeddings = state["embedder"].embed_documents([chunk.text for chunk in chunks])
+    state["store"].upsert(settings.collection, chunks, embeddings)
+
+    return {
+        "documents": len({chunk.document_id for chunk in chunks}),
+        "chunks": len(chunks),
+    }
+
+
+def sse(event: str, data) -> str:
+    """One SSE frame. `json.dumps` even for plain strings, so a token
+    containing a newline cannot forge a frame boundary -- the parser on the
+    other side splits on a blank line."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"

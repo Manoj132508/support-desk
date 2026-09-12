@@ -1,0 +1,18 @@
+# Runtime dependencies for the Python AI service. Pinned so a container build
+# is reproducible rather than "whatever PyPI served that day".
+#
+# Only DIRECT dependencies are listed. Their transitive deps -- notably torch,
+# transformers and numpy, pulled in by sentence-transformers -- are resolved by
+# pip, and are what make the image large.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+pydantic-settings==2.15.0
+
+# Retrieval. PORTED FROM PROJECT 1, same versions.
+sentence-transformers==5.7.0   # local embeddings (all-MiniLM-L6-v2)
+chromadb==1.5.9                # embedded vector store (PersistentClient)
+
+# Generation
+httpx==0.28.1                  # Ollama, async streaming
