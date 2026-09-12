@@ -29,6 +29,11 @@ export const config = {
 
   clientOrigin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5179',
   aiServiceUrl: process.env.AI_SERVICE_URL ?? '',
+  /** Shared secret so the advisory tier declines calls that did not come from
+   *  here. Defence in depth -- the real protection is that it is not publicly
+   *  routable (ADR 0001), but "not routable" is a deployment property and
+   *  deployment properties get changed by someone in a hurry. */
+  aiServiceToken: process.env.AI_SERVICE_TOKEN ?? '',
 
   /** A support message is not a file upload. */
   bodyLimit: '64kb',
