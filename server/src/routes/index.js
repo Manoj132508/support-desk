@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { healthRouter } from './health.js';
 import { authRouter } from './auth.js';
+import { conversationsRouter } from './conversations.js';
 import { AppError } from '../errors/AppError.js';
 import { confirmLimiter } from '../middleware/rateLimit.js';
 import { requireCsrfToken } from '../middleware/csrf.js';
@@ -57,10 +58,8 @@ apiRouter.use('/auth', authRouter);
 apiRouter.use(authenticate);
 apiRouter.use(requireCsrfToken);
 
-/* ── Conversations — FR-1, FR-2, FR-3 (Phases 9-10) ─────────────────────── */
-apiRouter.post('/conversations', pending('Phase 9'));
-apiRouter.get('/conversations/:id', pending('Phase 9'));
-apiRouter.post('/conversations/:id/messages', pending('Phase 9'));
+/* ── Conversations — FR-1, FR-2, FR-3 (Phase 9) ─────────────────────────── */
+apiRouter.use('/conversations', conversationsRouter);
 
 /* ── Proposals — FR-6, FR-7 (Phase 10) ──────────────────────────────────
  *
