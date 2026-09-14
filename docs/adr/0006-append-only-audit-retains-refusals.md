@@ -118,6 +118,18 @@ This forces a schema constraint worth stating plainly: **audit records store evi
 which is precisely the thing that cannot later be scrubbed. See
 [Phase 3](../phases/phase-03-database-design.md) §7.
 
+**2026-09-14 (Phase 10) — malformed attempts are recorded, as codes.** "Every proposal is
+persisted" could not be honoured for a proposal too malformed to resolve, because Phase 3
+required `target.orderId` unconditionally. `ActionProposal` now has a `validity` field and
+requires the resolved fields only when resolved.
+
+The reasons a proposal was malformed are stored as **enumerated codes, never as messages**. The
+messages echo model-supplied text — an unknown field name, an order number — and free text in an
+immutable row can never be scrubbed. The same rule applies to execution faults, which store an
+error code and no driver message. An attempt to assert authorisation (`authorised: true` and
+similar) has its own code, so the audit can count those attempts on their own. See
+[Phase 10](../phases/phase-10-the-core.md) §4.
+
 ## Verified by
 
 - Test: `ActionProposal`, `ActionOutcome`, `TicketEvent` reject every update path.

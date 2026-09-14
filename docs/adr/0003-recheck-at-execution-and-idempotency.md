@@ -115,6 +115,20 @@ executions misleads every future reader, and the audit log's whole purpose is to
 correctly. The decision in this ADR is unchanged; only the name is. See
 [Phase 3](../phases/phase-03-database-design.md) §4.
 
+**2026-09-14 (Phase 10) — where the proposal-time decision lives while a proposal is pending.**
+Both decisions are still embedded on `ActionOutcome`, as specified above. But a
+`confirm-required` proposal has no outcome row while it waits for the customer, and the proposal
+row is immutable and written before evaluation — so the proposal-time decision had nowhere to
+live between the two requests. Each evaluation is now also recorded as its own immutable
+`PolicyDecision` row, and confirmation reads the **recorded** proposal-time decision rather than
+re-deriving it, since re-deriving would silently rewrite history if a rule had changed.
+
+Two execution details were settled in the same phase. The cancellation write is conditional on
+the facts the decision read — status, total, currency — not only on the order's version, because
+a version guard misses another writer's plain update that never touches the version. And a
+transaction that commits but reports an error is resolved by the idempotency key, which by then
+already holds the `executed` outcome. See [Phase 10](../phases/phase-10-the-core.md) §5–6.
+
 ## Verified by
 
 - Test: confirming the same proposal twice cancels the order once; the second call returns the

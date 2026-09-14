@@ -119,6 +119,21 @@ wins*, which is what makes [ADR 0008](0008-policy-rules-tenant-scoped-with-globa
 baseline layering safe without a special case. See
 [Phase 3](../phases/phase-03-database-design.md) §5.
 
+**2026-09-14 (Phase 10) — precedence, stated precisely.** This ADR says both "the first match
+wins" and "where two rules could match, the more restrictive tier wins". Implemented literally,
+those contradict each other, and the first reading is unsafe: a tenant rule with a lower priority
+number would match first and shadow a baseline `refuse` rule that was never examined — the
+relaxation [ADR 0008](0008-policy-rules-tenant-scoped-with-global-baseline.md) promises cannot
+happen.
+
+The engine therefore evaluates **every** rule for the action type and takes the most restrictive
+matching outcome. Priority only decides which of several equally restrictive rules is *reported*
+as the decider. Two further rules were settled while building it: an evaluation missing a fact a
+rule needs **fails closed** to `agent-only` rather than treating the unchecked rule as not applying
+— not seeing a restriction is not permission — and a rule found invalid at evaluation fails closed
+rather than being skipped, since skipping a broken refusal would be a relaxation. See
+[Phase 10](../phases/phase-10-the-core.md) §3.
+
 ## Verified by
 
 - Policy eval golden set, gating CI: unauthorised-action rate 0, over-block rate reported.
