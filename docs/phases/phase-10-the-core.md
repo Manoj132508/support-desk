@@ -1,11 +1,11 @@
 # Phase 10 — The core
 
 **Project 3 · AI Support Desk**
-Status: **in progress.** Built, tested and committed: the policy engine, the proposal boundary,
-propose → confirm → execute with its MongoDB repository, the customer confirm and reject routes,
-policy administration and the audit query. Still to build: the `proposal` stream frame and the
-proposal source behind it, the customer conversation screen, the seed script and the expiry sweep
-(§11). This document records findings as they are made rather than reconstructing them at the end.
+Status: **in progress — one item left.** Built, tested and committed: the policy engine, the
+proposal boundary, propose → confirm → execute with its MongoDB repository, the confirm and reject
+routes, policy administration, the audit query, the proposal stream frame and the recogniser
+behind it, the demo seed and the expiry sweep. Still to build: the customer conversation screen
+(§14). This document records findings as they are made rather than reconstructing them at the end.
 
 This is the phase the project exists for. ADR 0002 (the model proposes, never authorises) and
 ADR 0003 (re-check at execution, execute at most once) stop being documents here.
@@ -22,18 +22,20 @@ server/src/policy/
   proposal.js         the boundary: shape, resolution, confirmation text
   actionService.js    propose → confirm → execute, over an injected repo
   mongoActionRepo.js  tenancy, once-only outcomes, atomic conditional execution
+  proposalFrames.js   what a customer's stream is told about a proposal
   policyAdmin.js      rules as versions; the baseline locked; authoring-time validation
   mongoPolicyRepo.js  a new version and the old one's retirement, in one transaction
   auditQuery.js       attempts, refusals included by default, keyset pages
   mongoAuditRepo.js   one aggregation over attempts, with ids cast explicitly
-server/src/db/models/audit.js   + PolicyDecision, + ActionProposal.validity/problemCodes/confirmText
-server/src/routes/
-  proposals.js        customer-only confirm and reject
-  policies.js         leads read, admins change
-  audit.js            leads and admins
+  expirySweep.js      undecided proposals expire, tenant by tenant
+  mongoSweepRepo.js   what "pending" means, as a pipeline
+server/src/services/sse.js      the relay: an allowlist, and the one intercepted frame
+server/src/routes/              proposals.js · policies.js · audit.js · conversations.js
+server/scripts/                 seedData.js (pure) · seed.js · sweep.js
+ai-service/app/pipeline/intent.py   recognising a request to act, conservatively
 ```
 
-Server suite: **311 tests**.
+Tests: **355 server**, **78 AI service**, 39 client.
 
 ---
 
@@ -294,7 +296,8 @@ misleading answer. A repeated parameter is refused too, rather than guessing whi
 paging. With `skip`, each new attempt pushes the next page down by one, so rows are shown twice or
 never. A cursor meaning "strictly older than this row", with `_id` breaking ties inside one
 millisecond, is unaffected by what arrives above it. A test adds an attempt between two pages and
-checks that nothing is duplicated and nothing is skipped.
+checks that nothing is duplicated and nothing is skipped. An index on `(tenantId, createdAt, _id)`,
+in exactly the order the pipeline sorts, serves it.
 
 One implementation trap is worth recording: **an aggregation does not cast ids.** `find()` quietly
 converts a string into an `ObjectId`; `aggregate()` does not, and a tenant id left as a string would
@@ -304,7 +307,112 @@ than another tenant's decision.
 
 ---
 
-## 9. Corrections to earlier phases
+## 9. The proposal stream frame
+
+This is where Phase 9's closed frame allowlist meets a real proposal, and **the allowlist stays
+closed**.
+
+The AI service sends a raw proposal upstream as **`proposal_request`**. The relay in `sse.js` does
+not forward it: it hands it to a handler that runs `actionService.propose` — boundary, resolution,
+record, evaluate — and only the *result* reaches the customer, as a `proposal` frame for
+confirmation or a `policy` notice.
+
+**The two names differ on purpose.** If both were `proposal`, a relay that forwarded proposal frames
+would be one mistaken line away from letting the model open its own confirmation dialog. With
+different names, nothing forwards `proposal_request` and nothing upstream may send `proposal`, so
+they cannot connect even by accident. The AI service's tests check that it never emits `proposal`
+at all.
+
+Four further rules, all tested:
+
+- **Customer frames are built from an allowlist** (`proposalFrames.js`): no rule keys, versions,
+  matched conditions, problem codes or internal reasons. A malformed attempt tells the customer
+  nothing about why.
+- **At most one proposal per turn** — ADR 0009 property 7, one proposal, one dialog. A second
+  request in the same turn is dropped rather than stacked.
+- **Only a customer's own turn may raise a proposal.** On a staff turn the request is dropped like
+  any unaccepted frame.
+- **A failure mid-turn aborts the upstream request**, rather than leaving the model generating
+  tokens behind a closed stream.
+
+The confirm result carries the action type and order number from the **recorded** proposal, so the
+dialog's button names the order as the database knows it, not as it was typed.
+
+---
+
+## 10. The proposal source, while inference is unavailable
+
+The natural proposer is the model, through tool calls. Live inference is blocked on this machine
+by a GPU fault, so proposals come from **a deterministic recogniser, `intent.py`, and the
+documentation says so** rather than implying a model decided anything.
+
+That does not weaken INV-A at all, which is the architecture's point: Express treats whatever
+arrives from the advisory tier as an untrusted request. A model, a regular expression, or an
+attacker who compromised that process are held to the same boundary, engine and confirmation.
+
+**It is tuned not to propose.** A missed request gets an ordinary grounded answer — mildly
+unhelpful, entirely safe. A false proposal puts a confirmation dialog in front of someone who only
+asked a question. So negation always wins; a question *about* cancelling never proposes, even with
+an order number in it; and a request naming no order **asks which one** rather than guessing,
+which is FR-4.2 exactly.
+
+**On an action turn the model is never called.** The assistant's words are static. A model asked to
+phrase "let me check that order" is a model that can phrase "done, I've cancelled it".
+
+Two test-writing lessons came out of this, both about tests that looked right:
+
+- The first check that the assistant never claims an action happened banned the bare word
+  "cancelled" — and so rejected *"Let me check whether order 1043 can be cancelled"*, a sentence
+  that describes a condition and claims nothing. The checker now matches claim *phrases*, and has
+  tests of its own, including sentences it must catch.
+- The first test that a grounded proposal carries evidence picked a sentence and assumed the fake
+  embedder would ground it. It did not. The rule under test is "evidence only when grounded", so the
+  threshold is now forced and the rule checked in both directions. How a real model grounds action
+  phrasings is a question for the Phase 13 eval.
+
+---
+
+## 11. The demo seed and the expiry sweep
+
+### 11.1 A demo that can be reproduced, and checked
+
+A demo is only evidence if a reviewer can reproduce it. `buildSeedData` is a pure function, so it is
+checked without a database: every document is validated against its real schema, and **the policy
+engine is run over the seeded orders** to confirm the demo shows what it claims — a confirmable
+cancellation (1043), an order that becomes a refusal once dispatched mid-flight (1042), and a
+high-value order caught by a tenant rule stricter than the baseline (1047). Every order status is
+present, and two orders exist only to be unreachable: another customer's, and another tenant's.
+
+The seed is **never destructive** — upserts on natural keys, insert-only fields, deterministic ids —
+and it **refuses to run in production**, because the demo accounts share a published password.
+`npm run seed -- dispatch 1042` marks an order dispatched with a **plain update that never bumps the
+version**, reproducing exactly the change §6's facts-conditional write guards against.
+
+Writing it exposed that `npm run dev` had never loaded `server/.env`, although the Phase 6 config
+comment said it did. And its first schema test failed on valid data: it passed each rule through
+`structuredClone`, which turns an `ObjectId` into a plain object holding bytes — a value that prints
+like an id but has lost its type, the same family of bug as the aggregation that does not cast.
+
+### 11.2 Proposals nobody decided
+
+A dismissed dialog leaves a proposal pending forever. The sweep gives it the terminal outcome
+`expired`, a non-execution (ADR 0009 property 5).
+
+- **The TTL is hygiene, not safety.** ADR 0003 already rejected a TTL as the protection against
+  stale facts — it narrows the window without closing it. The execution-time re-check is what makes
+  a late confirmation safe.
+- **Tenant by tenant.** One query over every tenant's proposals would be a second deliberate
+  cross-tenant business query, after the policy loader ADR 0008 names as the only one. The sweep
+  lists tenants — unscoped by nature — and does every business read and write inside one tenant.
+- **A proposal that was never offered is skipped**, rather than recorded as a customer walking away.
+- **A race with a confirmation is settled by the idempotency key**, because both record their outcome
+  through the same repository code and the same unique index. The sweep overwrites nothing.
+- `npm run sweep` is for the host scheduler, not a timer inside the API, which would run once per
+  instance.
+
+---
+
+## 12. Corrections to earlier phases
 
 | Correction | Recorded in |
 |---|---|
@@ -312,11 +420,12 @@ than another tenant's decision.
 | Malformed proposals are recordable, with codes rather than messages | [ADR 0006 amendment](../adr/0006-append-only-audit-retains-refusals.md#amendments) |
 | Each evaluation is a `PolicyDecision` row; the write is conditional on facts | [ADR 0003 amendment](../adr/0003-recheck-at-execution-and-idempotency.md#amendments) |
 | The Phase 6 contract had no route to create a rule; `POST /api/policies` added | §7, and the route list in `routes/index.js` |
+| The Phase 6 config said `npm run dev` loaded `.env`; it did not | §11.1, and `server/package.json` |
 | The Python suite's earlier green run was luck | [Phase 9 amendment](phase-09-kb-ingest-and-ai-service.md) |
 
 ---
 
-## 10. Honestly unverified
+## 13. Honestly unverified
 
 All of the following needs a MongoDB **replica set**, and none has run against one:
 
@@ -326,10 +435,12 @@ All of the following needs a MongoDB **replica set**, and none has run against o
   automatic retry re-runs the callback safely;
 - that a new rule version and the retirement of the old one commit together, and that two editors
   writing the same next version are separated by the unique index;
-- that the audit aggregation's `$switch` labels attempts exactly as `kindOf()` does. The two are
-  written to mirror each other and a test checks the branch order, but only a real MongoDB can show
-  they agree;
-- the whole route layer end to end: a customer proposing, confirming and seeing the result.
+- that the audit aggregation's `$switch` labels attempts exactly as `kindOf()` does, and that the
+  sweep's pipeline selects exactly the pending proposals. Both are written to mirror their
+  JavaScript counterparts and tested for structure, but only a real MongoDB can show they agree;
+- the seed and sweep scripts themselves — their pure cores are tested, the wrappers are not;
+- the route layer end to end: a customer's message reaching the AI service, the proposal being
+  intercepted, confirmed and executed, and the result shown.
 
 The repo tests use fake models. They assert the **shape** of every query and pipeline, and how
 database outcomes are translated. They do not, and are not described as, proving what MongoDB
@@ -337,20 +448,14 @@ itself does.
 
 ---
 
-## 11. Still to build in this phase
+## 14. Still to build in this phase
 
-- **The `proposal` stream frame.** The AI service sends a raw proposal upstream under its own event
-  name; Express intercepts it and never relays it, runs it through the boundary and the engine
-  above, and emits its *own* `proposal` or `policy` frame. The allowlist Phase 9 closed stays
-  closed — the model's unvalidated proposal can never reach the browser, because it is never
-  forwarded at all.
-- **The proposal source while live inference is unavailable.** A deterministic, deliberately
-  conservative intent recogniser in the AI service, documented plainly as *not* the model. It does
-  not weaken INV-A: whatever arrives from the advisory tier is untrusted, whether a model, a regular
-  expression or an attacker produced it.
-- **The customer conversation screen** — the confirmation dialog and policy block from Phases 4–5,
-  wired to those frames.
-- **An index for the audit's sort** on `ActionProposal` — `(tenantId, createdAt, _id)`. The
-  aggregation is correct without it and slow at scale without it.
-- A seed script for the baseline, demo tenants, customers and orders.
-- The sweep that expires undecided proposals.
+- **The customer conversation screen.** The confirmation dialog and policy block from Phases 4–5,
+  wired to the `proposal`, `policy`, `token`, `evidence` and `done` frames, with the transcript
+  built by a pure reducer so the rule that matters is testable: **only a server decision can mark an
+  order cancelled** — no stream frame can.
+
+One limit to state in advance: escalation to a person is Phase 11 (FR-8). Until then a policy notice
+cannot offer "talk to a person", and ADR 0007 says a refusal should always offer a next step. The
+screen will show the rule's own message and **no escalation button**, rather than a button that
+does nothing — and this gap closes in Phase 11.
