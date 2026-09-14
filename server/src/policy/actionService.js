@@ -187,9 +187,15 @@ export function makeActionService({ repo, clock = () => new Date(), log = noop }
     if (decision.outcome === 'confirm-required') {
       // Pending. No outcome row: a proposal with no outcome is awaiting the
       // customer (Phase 3 §4), and nothing has been authorised yet.
+      //
+      // The action type and order number come from the RECORDED proposal, so
+      // the confirmation dialog's button ("Cancel order 1043") names the order
+      // as the database knows it, not as the model typed it.
       return {
         kind: 'confirm',
         proposalId: proposal._id,
+        actionType: proposal.actionType,
+        target: { kind: 'order', orderNumber: proposal.target.orderNumber },
         confirmText: proposal.confirmText,
         decision,
       };

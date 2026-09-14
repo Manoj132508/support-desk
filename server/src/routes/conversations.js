@@ -4,10 +4,23 @@ import { scoped } from '../db/tenantScope.js';
 import { Conversation, Message } from '../db/models/index.js';
 import { streamTurn } from '../services/aiClient.js';
 import { openSseStream, relayFrames, sseFrame } from '../services/sse.js';
+import { makeActionService } from '../policy/actionService.js';
+import { makeMongoActionRepo } from '../policy/mongoActionRepo.js';
+import { framesForProposalResult } from '../policy/proposalFrames.js';
 
 export const conversationsRouter = Router();
 
 const handle = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+function jsonLog(event, fields) {
+  // Structured logs, which rotate -- where the readable messages go that must
+  // never enter an immutable audit row.
+  console.log(JSON.stringify({ level: 'info', event, ...fields }));
+}
+
+/** Proposals raised in conversation go through the same action service as
+ *  confirmation does: one boundary, one engine, one audit. */
+const actions = makeActionService({ repo: makeMongoActionRepo(), log: jsonLog });
 
 /** A customer acts on their own conversations; staff read them in the console.
  *  `customerId` comes from the session (Phase 8), never from the request. */
@@ -59,19 +72,26 @@ conversationsRouter.get(
 /**
  * POST /api/conversations/:id/messages — the streaming turn.
  *
- * Three things happen here that are worth reading closely.
+ * Four things happen here that are worth reading closely.
  *
  * 1. THE CUSTOMER TURN IS PERSISTED BEFORE ANYTHING ELSE. If the AI service is
  *    down, the question the customer asked is still on the record and an agent
  *    can answer it. Losing the question because the advisory tier was
  *    unavailable would be the worst possible failure of FR-14.3.
  *
- * 2. CANCELLATION IS A CLIENT DISCONNECT (FR-1.3). There is no cancel frame;
+ * 2. A PROPOSAL IS INTERCEPTED, NEVER RELAYED. The AI service sends a raw
+ *    `proposal_request`; the relay hands it to the action service, which
+ *    validates, resolves, records and evaluates it, and the customer receives
+ *    only the result -- a `proposal` frame for confirmation or a `policy`
+ *    notice. Only a customer's own turn may raise a proposal (ADR 0009: the
+ *    customer confirms). On a staff turn the request is simply dropped.
+ *
+ * 3. CANCELLATION IS A CLIENT DISCONNECT (FR-1.3). There is no cancel frame;
  *    the server watches for the connection closing and aborts upstream. The
  *    partial turn is then persisted as `cancelled`, visibly, rather than
  *    silently completing or vanishing.
  *
- * 3. ERRORS AFTER THE HEADERS ARE SENT CANNOT BE A STATUS CODE. Once the
+ * 4. ERRORS AFTER THE HEADERS ARE SENT CANNOT BE A STATUS CODE. Once the
  *    stream is open the response is committed, so a failure is delivered as an
  *    `error` FRAME -- and that frame carries only `fault`, never a refusal,
  *    because a refusal belongs in the client's policy language (Phase 4 §5).
@@ -114,6 +134,25 @@ conversationsRouter.post(
       }
     });
 
+    // Only a customer's own turn may raise a proposal. Staff turns get no
+    // handler, so a `proposal_request` on one is dropped like any frame
+    // Express does not accept.
+    let proposalId = null;
+    const onProposalRequest =
+      req.user.role === 'customer' && req.user.customerId
+        ? async (raw) => {
+            const result = await actions.propose({
+              ctx: req,
+              customerId: req.user.customerId,
+              conversationId: conversation._id,
+              raw,
+              correlationId: req.correlationId,
+            });
+            proposalId = result.proposalId;
+            return framesForProposalResult(result);
+          }
+        : undefined;
+
     openSseStream(res);
 
     let seen;
@@ -127,11 +166,12 @@ conversationsRouter.post(
         }),
         res,
         {
+          onProposalRequest,
           onDropped: (frame) =>
             console.warn(
               JSON.stringify({
                 level: 'warn',
-                message: 'Dropped a frame the advisory tier is not permitted to send',
+                message: 'Dropped a frame Express does not accept on this turn',
                 event: frame.event,
                 correlationId: req.correlationId,
               }),
@@ -139,6 +179,11 @@ conversationsRouter.post(
         },
       );
     } catch (error) {
+      // Stop the advisory tier generating tokens nobody will read. Without this
+      // a failure mid-turn -- a database error while recording a proposal, say
+      // -- would leave the model running to completion behind a closed stream.
+      controller.abort();
+
       // Headers are already sent, so this cannot be a status code.
       res.write(sseFrame('error', { kind: 'fault', message: 'The assistant is unavailable' }));
       res.end();
@@ -158,6 +203,7 @@ conversationsRouter.post(
       content: seen.tokens.join(''),
       state: cancelled ? 'cancelled' : 'complete',
       evidence: seen.evidence.map((item) => ({ kind: item.kind, ref: item.ref })),
+      proposalId,
       correlationId: req.correlationId,
     });
 

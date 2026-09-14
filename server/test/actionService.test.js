@@ -399,3 +399,15 @@ test('the idempotency key is derived from the proposal and nothing else', () => 
   assert.equal(idempotencyKeyFor('abc'), 'proposal:abc');
   assert.equal(idempotencyKeyFor('abc'), idempotencyKeyFor('abc'));
 });
+
+test('a confirm result names the action and the order exactly as they were RECORDED', async () => {
+  // The confirmation dialog labels its button from these ("Cancel order 1043"),
+  // so they must come from the recorded proposal -- the database's view of the
+  // order -- not from anything the advisory tier sent.
+  const { repo, propose } = setup();
+  const result = await propose();
+  const recorded = repo.state.proposals.get(result.proposalId);
+
+  assert.equal(result.actionType, recorded.actionType);
+  assert.deepEqual(result.target, { kind: 'order', orderNumber: recorded.target.orderNumber });
+});

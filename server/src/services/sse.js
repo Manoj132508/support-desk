@@ -8,19 +8,32 @@
  * arrives.
  */
 
-/** Frames Express is willing to relay. Anything else is dropped.
+/** Frames Express is willing to RELAY. Anything else is dropped.
  *
  * A pass-through relay would mean the advisory tier could emit a frame name the
- * client happens to act on -- today that is cosmetic, but Phase 10 adds a
- * `proposal` frame that opens a confirmation dialog. On that day, "relay
- * whatever the model's service sent" becomes "let the model open its own
- * authorisation prompt", which is precisely the thing INV-A forbids.
+ * client acts on. The browser's `proposal` frame opens a confirmation dialog;
+ * if upstream frames named `proposal` were forwarded, the model could open its
+ * own authorisation prompt -- precisely the thing INV-A forbids.
  *
- * So the list is closed now, while it is cheap, rather than after there is
- * something worth exploiting. `proposal` is deliberately ABSENT until Phase 10
- * builds the validation that must accompany it.
+ * So `proposal` is NOT in this list, and never will be. Express emits that
+ * frame itself, after validation (see INTERCEPTED_FRAMES). Phase 9 closed this
+ * list while it was cheap; Phase 10 kept it closed.
  */
 export const RELAYABLE_FRAMES = new Set(['token', 'evidence', 'done']);
+
+/**
+ * Frames Express INTERCEPTS: consumed here, never forwarded.
+ *
+ * `proposal_request` carries the advisory tier's RAW proposal. It goes to a
+ * handler that runs it through the boundary, the engine and the audit, and the
+ * handler's output -- not the raw proposal -- is what the browser receives. The
+ * upstream name deliberately differs from the downstream one, so no single
+ * relay mistake can connect them.
+ */
+export const INTERCEPTED_FRAMES = new Set(['proposal_request']);
+
+/** What an interception handler may put into the customer's stream. */
+const HANDLER_EVENTS = new Set(['proposal', 'policy']);
 
 /** Fields Express will pass on from an `evidence` frame.
  *
@@ -66,14 +79,47 @@ function sanitiseEvidence(data) {
  * Written to take an async iterable and a plain sink so the whole thing is
  * testable without a network, a model, or an HTTP server -- the same seam
  * reasoning as the Python side.
+ *
+ * `onProposalRequest(raw)` is optional. Without it -- a staff member's turn, for
+ * instance, which may not raise a proposal -- a `proposal_request` is DROPPED,
+ * exactly like any other frame Express does not accept. With it, the handler's
+ * returned frames are written instead of the raw request.
+ *
+ * AT MOST ONE PROPOSAL PER TURN. ADR 0009 property 7: one proposal, one dialog.
+ * A second `proposal_request` in the same turn is dropped rather than stacking
+ * confirmations in front of the customer.
  */
-export async function relayFrames(upstream, sink, { onDropped } = {}) {
-  const seen = { tokens: [], evidence: [], done: null, dropped: [] };
+export async function relayFrames(upstream, sink, { onDropped, onProposalRequest } = {}) {
+  const seen = { tokens: [], evidence: [], done: null, dropped: [], intercepted: 0 };
+
+  const drop = (frame) => {
+    seen.dropped.push(frame.event);
+    onDropped?.(frame);
+  };
 
   for await (const frame of upstream) {
+    if (INTERCEPTED_FRAMES.has(frame.event)) {
+      if (!onProposalRequest || seen.intercepted >= 1) {
+        drop(frame);
+        continue;
+      }
+      seen.intercepted += 1;
+
+      const emitted = await onProposalRequest(frame.data);
+      for (const out of emitted ?? []) {
+        if (!HANDLER_EVENTS.has(out?.event)) {
+          // A programming error in a handler, not a data condition: it would
+          // mean Express itself was about to put something other than a
+          // validated proposal or a policy notice into the customer's stream.
+          throw new Error(`An interception handler may not emit "${out?.event}"`);
+        }
+        sink.write(sseFrame(out.event, out.data));
+      }
+      continue;
+    }
+
     if (!RELAYABLE_FRAMES.has(frame.event)) {
-      seen.dropped.push(frame.event);
-      onDropped?.(frame);
+      drop(frame);
       continue;
     }
 

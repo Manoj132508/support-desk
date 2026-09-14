@@ -64,12 +64,87 @@ test('ADR 0002: a frame Express does not permit is DROPPED, not forwarded', asyn
   assert.ok(!body.includes('execute'));
 });
 
-test('proposal is deliberately absent from the allowlist until Phase 10', () => {
-  // Closed now, while it is cheap, rather than after there is something worth
-  // exploiting. Phase 10 adds it together with the validation that must
-  // accompany it.
+test('the browser’s proposal frame is NEVER relayed from upstream — Express emits its own', () => {
+  // Phase 9 closed this list while it was cheap. Phase 10 kept it closed: the
+  // advisory tier's raw proposal arrives under a different name and is
+  // intercepted, so there is no relay path by which the model could open its
+  // own confirmation dialog.
   assert.equal(RELAYABLE_FRAMES.has('proposal'), false);
+  assert.equal(RELAYABLE_FRAMES.has('proposal_request'), false);
   assert.deepEqual([...RELAYABLE_FRAMES].sort(), ['done', 'evidence', 'token']);
+});
+
+test('a proposal_request is INTERCEPTED: the handler’s frames go out, the raw proposal never does', async () => {
+  const sink = fakeSink();
+  const received = [];
+
+  const seen = await relayFrames(
+    upstream([
+      { event: 'token', data: 'Let me check that order.' },
+      {
+        event: 'proposal_request',
+        data: { actionType: 'order.cancel', target: { kind: 'order', orderNumber: '1043' }, authorised: true },
+      },
+      { event: 'done', data: {} },
+    ]),
+    sink,
+    {
+      onProposalRequest: async (raw) => {
+        received.push(raw);
+        return [{ event: 'policy', data: { kind: 'malformed', customerMessage: null } }];
+      },
+    },
+  );
+
+  assert.equal(received.length, 1, 'the handler sees the raw proposal');
+  assert.equal(seen.intercepted, 1);
+  const body = sink.written.join('');
+  assert.ok(body.includes('event: policy'), 'the handler’s frame is written');
+  assert.ok(!body.includes('proposal_request'), 'the raw event name never reaches the browser');
+  assert.ok(!body.includes('authorised'), 'nothing from the raw proposal is forwarded');
+});
+
+test('with no handler — a staff turn — a proposal_request is dropped like any unaccepted frame', async () => {
+  const sink = fakeSink();
+  const dropped = [];
+  const seen = await relayFrames(
+    upstream([{ event: 'proposal_request', data: { actionType: 'order.cancel' } }]),
+    sink,
+    { onDropped: (frame) => dropped.push(frame.event) },
+  );
+  assert.deepEqual(seen.dropped, ['proposal_request']);
+  assert.deepEqual(dropped, ['proposal_request']);
+  assert.equal(sink.written.length, 0);
+});
+
+test('ADR 0009: at most one proposal per turn — a second request is dropped, not stacked', async () => {
+  const sink = fakeSink();
+  let calls = 0;
+  const seen = await relayFrames(
+    upstream([
+      { event: 'proposal_request', data: { n: 1 } },
+      { event: 'proposal_request', data: { n: 2 } },
+    ]),
+    sink,
+    {
+      onProposalRequest: async () => {
+        calls += 1;
+        return [{ event: 'proposal', data: { id: 'p1' } }];
+      },
+    },
+  );
+  assert.equal(calls, 1);
+  assert.deepEqual(seen.dropped, ['proposal_request']);
+  assert.equal(sink.written.filter((chunk) => chunk.startsWith('event: proposal')).length, 1);
+});
+
+test('an interception handler cannot put anything but a proposal or policy frame into the stream', async () => {
+  await assert.rejects(
+    relayFrames(upstream([{ event: 'proposal_request', data: {} }]), fakeSink(), {
+      onProposalRequest: async () => [{ event: 'execute', data: { orderId: '1043' } }],
+    }),
+    /may not emit "execute"/,
+  );
 });
 
 test('ADR 0006: a snippet on an evidence frame is stripped, not relayed', async () => {
