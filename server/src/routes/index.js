@@ -4,9 +4,11 @@ import { authRouter } from './auth.js';
 import { conversationsRouter } from './conversations.js';
 import { AppError } from '../errors/AppError.js';
 import { makeProposalsRouter } from './proposals.js';
+import { makePoliciesRouter } from './policies.js';
+import { makeAuditRouter } from './audit.js';
 import { requireCsrfToken } from '../middleware/csrf.js';
 import { authenticate } from '../middleware/authenticate.js';
-import { requireRole, STAFF, LEADERSHIP } from '../middleware/requireRole.js';
+import { requireRole, STAFF } from '../middleware/requireRole.js';
 
 /**
  * Every route in the Phase 6 contract, mounted.
@@ -80,11 +82,11 @@ apiRouter.post('/tickets/:id/status', requireRole(STAFF), pending('Phase 11'));
 apiRouter.post('/tickets/:id/escalate', pending('Phase 11'));
 
 /* ── Policy and audit — FR-11, FR-12 (Phase 10) ─────────────────────────
- * Leads and admins only. These are the screens that decide what the assistant
- * may do and show what it tried to do. */
-apiRouter.get('/policies', requireRole(LEADERSHIP), pending('Phase 10'));
-apiRouter.put('/policies/:id', requireRole('admin'), pending('Phase 10'));
-apiRouter.get('/audit', requireRole(LEADERSHIP), pending('Phase 10'));
+ * Leads may read both; only admins change rules. The roles are enforced inside
+ * each router. POST /api/policies is an addition to the Phase 6 contract, which
+ * had no way to create a rule. */
+apiRouter.use('/policies', makePoliciesRouter());
+apiRouter.use('/audit', makeAuditRouter());
 
 /** The contract, as data. The mount test reads this so the document, the
  *  router and the test cannot drift apart in three directions. */
@@ -104,6 +106,7 @@ export const CONTRACT_ROUTES = [
   ['post', '/api/tickets/abc/status'],
   ['post', '/api/tickets/abc/escalate'],
   ['get', '/api/policies'],
+  ['post', '/api/policies'],
   ['put', '/api/policies/abc'],
   ['get', '/api/audit'],
 ];
