@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.pipeline.generator import Generator, OllamaGenerator
+from app.pipeline.generator import OllamaGenerator
 from app.pipeline.loader import load_kb
 from app.service import plan_turn, stream_answer
 
@@ -95,14 +95,16 @@ class TurnRequest(BaseModel):
 async def turn(request: TurnRequest) -> StreamingResponse:
     """Streams one advisory turn as SSE.
 
-    The frame names match the Phase 6 contract exactly, because Express relays
-    them to the browser rather than re-encoding them, and the client's
-    `parseFrames` already expects these names.
+    `token`, `evidence` and `done` are relayed by Express to the browser, so
+    their names match the Phase 6 contract and the client's `parseFrames`.
+
+    `proposal_request` is NOT relayed. It carries a raw proposal to Express,
+    which intercepts it, runs it through the boundary and the policy engine,
+    and sends the browser its own `proposal` or `policy` frame instead. This
+    service never emits `proposal` itself -- that is the browser's event, and
+    only Express may produce it.
 
     `evidence` frames carry references, never snippets (ADR 0006 amendment).
-    A `policy` frame is NOT an error frame -- errors carry only faults, and
-    sending a refusal as an error would push it into the client's fault
-    language and undo Phase 4 section 5.
     """
     plan = plan_turn(
         question=request.question,
@@ -112,21 +114,29 @@ async def turn(request: TurnRequest) -> StreamingResponse:
     )
 
     async def frames() -> AsyncIterator[str]:
-        for citation in plan.citations:
-            yield sse(
-                "evidence",
-                {
-                    "kind": "kb_chunk",
-                    "ref": citation.chunk_id,
-                    "n": citation.n,
-                    "documentName": citation.document_name,
-                    "section": citation.section,
-                    "score": round(citation.score, 4),
-                },
-            )
+        # On an action turn the citations are attached to the proposal as
+        # evidence, not shown as footnotes: the assistant's words on that turn
+        # are static and carry no [n] markers to hang them on.
+        if plan.action is None:
+            for citation in plan.citations:
+                yield sse(
+                    "evidence",
+                    {
+                        "kind": "kb_chunk",
+                        "ref": citation.chunk_id,
+                        "n": citation.n,
+                        "documentName": citation.document_name,
+                        "section": citation.section,
+                        "score": round(citation.score, 4),
+                    },
+                )
 
         async for token in stream_answer(plan, state["generator"]):
             yield sse("token", token)
+
+        if plan.action is not None and plan.action.proposal is not None:
+            # A REQUEST, under its own event name. See the docstring above.
+            yield sse("proposal_request", plan.action.proposal)
 
         yield sse(
             "done",
@@ -134,6 +144,7 @@ async def turn(request: TurnRequest) -> StreamingResponse:
                 "grounded": plan.grounded,
                 "shouldEscalate": plan.should_escalate,
                 "topScore": plan.top_score,
+                "action": plan.action.kind if plan.action is not None else None,
             },
         )
 
