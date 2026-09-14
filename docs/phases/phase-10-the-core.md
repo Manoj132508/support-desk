@@ -1,11 +1,11 @@
 # Phase 10 — The core
 
 **Project 3 · AI Support Desk**
-Status: **in progress.** The engine, the proposal boundary, the propose → confirm → execute
-service and its MongoDB repository are built, tested and committed. The customer confirm and reject
-routes are built and verified; the `proposal` stream frame, the policy and audit endpoints and the seed script are
-still to build (§9). This document records findings as they are made rather than reconstructing
-them at the end.
+Status: **in progress.** Built, tested and committed: the policy engine, the proposal boundary,
+propose → confirm → execute with its MongoDB repository, the customer confirm and reject routes,
+policy administration and the audit query. Still to build: the `proposal` stream frame and the
+proposal source behind it, the customer conversation screen, the seed script and the expiry sweep
+(§11). This document records findings as they are made rather than reconstructing them at the end.
 
 This is the phase the project exists for. ADR 0002 (the model proposes, never authorises) and
 ADR 0003 (re-check at execution, execute at most once) stop being documents here.
@@ -22,11 +22,18 @@ server/src/policy/
   proposal.js         the boundary: shape, resolution, confirmation text
   actionService.js    propose → confirm → execute, over an injected repo
   mongoActionRepo.js  tenancy, once-only outcomes, atomic conditional execution
+  policyAdmin.js      rules as versions; the baseline locked; authoring-time validation
+  mongoPolicyRepo.js  a new version and the old one's retirement, in one transaction
+  auditQuery.js       attempts, refusals included by default, keyset pages
+  mongoAuditRepo.js   one aggregation over attempts, with ids cast explicitly
 server/src/db/models/audit.js   + PolicyDecision, + ActionProposal.validity/problemCodes/confirmText
-server/src/routes/proposals.js  customer-only confirm and reject
+server/src/routes/
+  proposals.js        customer-only confirm and reject
+  policies.js         leads read, admins change
+  audit.js            leads and admins
 ```
 
-Server suite: **239 tests**, including the confirm and reject routes.
+Server suite: **311 tests**.
 
 ---
 
@@ -212,7 +219,6 @@ The repo looks again outside the aborted snapshot before reporting a conflict.
 **A malformed proposal id returns "not found" without a query.** A `CastError` would be a 500 whose
 body differs from a 404's — an existence oracle.
 
-
 ### 6.1 The confirm route tells a customer nothing about policy
 
 The stored outcome carries both policy decisions — rule keys, versions, matched conditions. That
@@ -230,18 +236,87 @@ authorisation, in Phase 11.
 
 ---
 
-## 7. Corrections to earlier phases
+## 7. Policy administration
+
+This is the only way a person changes what the assistant is allowed to do, so it is held to three
+rules.
+
+**Every change is a new version — including disabling a rule.** An edit writes the next version;
+the old one keeps its content, and only its `active` flag flips. A past decision therefore stays
+explainable against the exact rule version that made it (FR-12.2), and "who changed this, and
+when" is answered by the version rows themselves. Rewording a disabled rule does not quietly switch
+it back on.
+
+**The platform baseline is locked to the API.** Leads can see it; an attempt to edit it is a 403.
+A tenant can make any baseline rule stricter with a rule of its own — the ladder guarantees that —
+but cannot relax one (ADR 0008). The version change and the old version's retirement commit in one
+transaction, so there is never a moment with two active versions of a rule, or none.
+
+**A rule that would behave unlike how it reads is refused when written.** The validator is
+deliberately *stricter* than the schema and never looser — a test asserts that everything it
+accepts, the schema and the engine accept too. The extra strictness targets rules that would save
+cleanly and then mislead:
+
+| Refused | Because |
+|---|---|
+| `eq` compared with a list | it can never match, so the rule would look active and do nothing |
+| `auto-execute` | the engine would clamp it (FR-5.4), so the rule would do something other than it says |
+| a customer message naming a rule key or a condition field | it hands the policy boundary to the customer (ADR 0007) |
+
+Concurrency is handled at two levels: editing from an out-of-date screen is a 409, and two editors
+writing the same next version are separated by the unique version index rather than one silently
+overwriting the other.
+
+**A gap in the Phase 6 contract.** It specified reading and editing rules but gave no way to
+*create* one. FR-12.1 requires it, and ADR 0008's tenant layering cannot be demonstrated without a
+tenant rule, so `POST /api/policies` is added.
+
+---
+
+## 8. The audit query
+
+The query exists to answer the question that sells the project: *what did the assistant try to do
+that it was not allowed to do?* Taking that seriously produced four decisions.
+
+**The unit is the attempt, not the outcome.** The query runs over every `ActionProposal`, with its
+outcome and proposal-time decision joined on where they exist. That puts attempts that never
+reached the policy engine — including ones that tried to assert their own authorisation — into the
+answer. `preset=stopped` asks exactly the question above, and deliberately leaves out customer
+rejections: a customer declining is not the assistant being stopped.
+
+**Refusals are in by default (FR-11.2).** Excluding them takes an explicit filter.
+
+**An unrecognised filter is an error.** A lead who types `kinds=` instead of `kind=` must not get
+back an unfiltered list they believe is filtered. For an audit, a silently ignored filter is a
+misleading answer. A repeated parameter is refused too, rather than guessing which one wins.
+
+**Pagination is keyset, not offset.** The log is append-only and grows at the top while someone is
+paging. With `skip`, each new attempt pushes the next page down by one, so rows are shown twice or
+never. A cursor meaning "strictly older than this row", with `_id` breaking ties inside one
+millisecond, is unaffected by what arrives above it. A test adds an attempt between two pages and
+checks that nothing is duplicated and nothing is skipped.
+
+One implementation trap is worth recording: **an aggregation does not cast ids.** `find()` quietly
+converts a string into an `ObjectId`; `aggregate()` does not, and a tenant id left as a string would
+match nothing — an empty audit, and a baffling one. Every id is converted explicitly, and the tenant
+condition is repeated inside each join, so a broken invariant elsewhere yields a missing join rather
+than another tenant's decision.
+
+---
+
+## 9. Corrections to earlier phases
 
 | Correction | Recorded in |
 |---|---|
 | Precedence: evaluate every rule, most restrictive wins | [ADR 0004 amendment](../adr/0004-policy-as-data.md#amendments) |
 | Malformed proposals are recordable, with codes rather than messages | [ADR 0006 amendment](../adr/0006-append-only-audit-retains-refusals.md#amendments) |
 | Each evaluation is a `PolicyDecision` row; the write is conditional on facts | [ADR 0003 amendment](../adr/0003-recheck-at-execution-and-idempotency.md#amendments) |
+| The Phase 6 contract had no route to create a rule; `POST /api/policies` added | §7, and the route list in `routes/index.js` |
 | The Python suite's earlier green run was luck | [Phase 9 amendment](phase-09-kb-ingest-and-ai-service.md) |
 
 ---
 
-## 8. Honestly unverified
+## 10. Honestly unverified
 
 All of the following needs a MongoDB **replica set**, and none has run against one:
 
@@ -249,22 +324,33 @@ All of the following needs a MongoDB **replica set**, and none has run against o
   partial index on proposal-stage decisions;
 - that the execution transaction commits or aborts as a unit, and that `withTransaction`'s
   automatic retry re-runs the callback safely;
+- that a new rule version and the retirement of the old one commit together, and that two editors
+  writing the same next version are separated by the unique index;
+- that the audit aggregation's `$switch` labels attempts exactly as `kindOf()` does. The two are
+  written to mirror each other and a test checks the branch order, but only a real MongoDB can show
+  they agree;
 - the whole route layer end to end: a customer proposing, confirming and seeing the result.
 
-The repo tests use fake models. They assert the **shape** of every query and how database outcomes
-are translated. They do not, and are not described as, proving what MongoDB itself does.
+The repo tests use fake models. They assert the **shape** of every query and pipeline, and how
+database outcomes are translated. They do not, and are not described as, proving what MongoDB
+itself does.
 
 ---
 
-## 9. Still to build in this phase
+## 11. Still to build in this phase
 
-- The `proposal` stream frame: the AI service emitting a proposal, Express validating it through
-  the boundary above, and only then adding `proposal` to the frame allowlist Phase 9 deliberately
-  closed.
-- Policy administration: list rules split into baseline and tenant (ADR 0008); edits as new
-  versions, including disabling. The Phase 6 contract has no route to *create* a rule, which
-  FR-12.1 requires.
-- The audit query: refusals included by default (FR-11.2), and malformed attempts included too,
-  since "what did the assistant try to do that it was not allowed to do" covers them.
+- **The `proposal` stream frame.** The AI service sends a raw proposal upstream under its own event
+  name; Express intercepts it and never relays it, runs it through the boundary and the engine
+  above, and emits its *own* `proposal` or `policy` frame. The allowlist Phase 9 closed stays
+  closed — the model's unvalidated proposal can never reach the browser, because it is never
+  forwarded at all.
+- **The proposal source while live inference is unavailable.** A deterministic, deliberately
+  conservative intent recogniser in the AI service, documented plainly as *not* the model. It does
+  not weaken INV-A: whatever arrives from the advisory tier is untrusted, whether a model, a regular
+  expression or an attacker produced it.
+- **The customer conversation screen** — the confirmation dialog and policy block from Phases 4–5,
+  wired to those frames.
+- **An index for the audit's sort** on `ActionProposal` — `(tenantId, createdAt, _id)`. The
+  aggregation is correct without it and slow at scale without it.
 - A seed script for the baseline, demo tenants, customers and orders.
 - The sweep that expires undecided proposals.
