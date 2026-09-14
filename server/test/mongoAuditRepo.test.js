@@ -134,3 +134,16 @@ test('the repo aggregates over proposals, joining the models’ own collection n
   const froms = stageOf(received, '$lookup').map(({ $lookup }) => $lookup.from);
   assert.deepEqual(froms, ['actionoutcomes', 'policydecisions']);
 });
+
+test('an index serves the audit sort, with its keys in the order the pipeline uses them', async () => {
+  const { ActionProposal } = await import('../src/db/models/index.js');
+  const index = ActionProposal.schema
+    .indexes()
+    .find(([fields]) => fields.tenantId === 1 && fields.createdAt === -1 && fields._id === -1);
+
+  assert.ok(index, 'expected an index on { tenantId: 1, createdAt: -1, _id: -1 }');
+  // Key order is what makes an index usable for a sort: it must lead with the
+  // tenant the pipeline matches on, then follow the $sort exactly.
+  assert.deepEqual(Object.keys(index[0]), ['tenantId', 'createdAt', '_id']);
+  assert.deepEqual(pipeline()[1].$sort, { createdAt: -1, _id: -1 });
+});

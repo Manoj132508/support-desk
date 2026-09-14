@@ -198,6 +198,14 @@ const proposalSchema = new Schema(
 proposalSchema.plugin(immutablePlugin);
 proposalSchema.index({ tenantId: 1, conversationId: 1, createdAt: -1 });
 
+/**
+ * Serves the audit query's sort: tenant first, then newest first, with _id as
+ * the tie-break the keyset cursor relies on. Without it the aggregation is
+ * still correct -- and sorts every attempt in the tenant to return fifty, which
+ * is fine at seed scale and a slow page on a log that only ever grows.
+ */
+proposalSchema.index({ tenantId: 1, createdAt: -1, _id: -1 });
+
 /* ── ActionOutcome — how it ended ───────────────────────────────────────── */
 export const OUTCOMES = [
   'refused_at_proposal',
