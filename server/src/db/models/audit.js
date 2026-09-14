@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { immutablePlugin } from '../plugins/immutable.js';
+import { OUTCOME_LADDER, CONDITION_FIELDS, PROBLEM_CODES } from '../../policy/vocabulary.js';
 
 const { Schema, model } = mongoose;
 
@@ -20,28 +21,14 @@ const { Schema, model } = mongoose;
  * in CONTENT; the flag is bookkeeping. A test asserts no other field ever
  * changes on an existing version. */
 
-export const OUTCOME_LADDER = ['auto-execute', 'confirm-required', 'agent-only', 'refuse'];
-
 /**
- * The condition vocabulary, as a registry (Phase 3 section 5.2).
- *
- * This is the policy engine's entire input contract. Keeping it closed and
- * typed is what makes `evaluate()` a total function over a small, enumerable
- * input space -- which is what makes exhaustive testing possible and the golden
- * set meaningful. A rule naming an unregistered field is rejected when it is
- * SAVED, not discovered when it is evaluated.
+ * The ladder, the condition registry and the problem codes are declared in
+ * policy/vocabulary.js, which imports nothing, so the policy engine can depend
+ * on the vocabulary without depending on Mongoose. They are re-exported here
+ * because the schemas below validate against them -- one definition, two
+ * consumers.
  */
-export const CONDITION_FIELDS = {
-  'order.status': {
-    type: 'enum',
-    operators: ['eq', 'ne', 'in', 'nin'],
-    values: ['placed', 'paid', 'packed', 'dispatched', 'delivered', 'cancelled'],
-  },
-  'order.ageHours': { type: 'int', operators: ['lt', 'lte', 'gt', 'gte'] },
-  'order.totalMinor': { type: 'int', operators: ['lt', 'lte', 'gt', 'gte'] },
-  'order.currency': { type: 'enum', operators: ['eq', 'in'], values: null },
-  'customer.orderCount90d': { type: 'int', operators: ['lt', 'lte', 'gt', 'gte'] },
-};
+export { OUTCOME_LADDER, CONDITION_FIELDS, PROBLEM_CODES };
 
 const conditionSchema = new Schema(
   {
@@ -63,7 +50,7 @@ const policyRuleSchema = new Schema(
     actionType: { type: String, required: true, enum: ['order.cancel'] },
     priority: { type: Number, required: true, default: 100 },
     conditions: { type: [conditionSchema], default: [] },
-    outcome: { type: String, required: true, enum: OUTCOME_LADDER },
+    outcome: { type: String, required: true, enum: [...OUTCOME_LADDER] },
     /** ADR 0007. Required, because writing the human sentence is part of
      *  writing the rule -- not an afterthought. */
     customerMessage: { type: String, required: true, trim: true },
@@ -142,18 +129,44 @@ const evidenceRefSchema = new Schema(
   },
   { _id: false, strict: 'throw' },
 );
+
+/** Resolved fields are required unless the proposal was recorded as malformed. */
+function isResolved() {
+  return this.validity !== 'malformed';
+}
+
 const proposalSchema = new Schema(
   {
     tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true },
     conversationId: { type: Schema.Types.ObjectId, ref: 'Conversation', required: true },
     messageId: { type: Schema.Types.ObjectId, ref: 'Message', default: null },
     customerId: { type: Schema.Types.ObjectId, ref: 'Customer', required: true },
-    actionType: { type: String, required: true, enum: ['order.cancel'] },
+    /**
+     * Known when the row is written and never changes, so it belongs in an
+     * immutable record.
+     *
+     * A MALFORMED proposal is still recorded (FR-4.3, ADR 0006): what the model
+     * tried to do and was stopped from doing includes attempts too malformed to
+     * evaluate. Phase 3 made target.orderId unconditionally required, which made
+     * recording them impossible -- an attempt that never resolved has no order
+     * to point at. Found while building the propose path in Phase 10. The
+     * resolved fields are now required only for a resolved proposal.
+     */
+    validity: { type: String, enum: ['resolved', 'malformed'], required: true, default: 'resolved' },
+    /**
+     * CODES, never messages. A problem message can echo model-supplied text --
+     * an unknown field name, an order number -- and free text in a row that can
+     * never be edited is unscrubbable by construction, the same constraint that
+     * keeps snippets out of evidence. The readable message goes to the logs,
+     * which rotate; the audit keeps the enumerated reason.
+     */
+    problemCodes: { type: [{ type: String, enum: [...PROBLEM_CODES] }], default: [] },
+    actionType: { type: String, required: isResolved, enum: ['order.cancel'] },
     target: {
       _id: false,
-      kind: { type: String, required: true, enum: ['order'] },
-      orderId: { type: Schema.Types.ObjectId, ref: 'Order', required: true },
-      orderNumber: { type: String, required: true },
+      kind: { type: String, required: isResolved, enum: ['order'] },
+      orderId: { type: Schema.Types.ObjectId, ref: 'Order', required: isResolved },
+      orderNumber: { type: String, required: isResolved },
     },
     resolvedArgs: { type: Schema.Types.Mixed, default: {} },
     /** REFERENCES ONLY, never snippets — see `evidenceRefSchema`. */
@@ -188,7 +201,7 @@ const decisionSchema = new Schema(
     ruleId: { type: Schema.Types.ObjectId, ref: 'PolicyRule', default: null },
     ruleKey: { type: String, default: null },
     ruleVersion: { type: Number, default: null },
-    outcome: { type: String, enum: OUTCOME_LADDER, required: true },
+    outcome: { type: String, enum: [...OUTCOME_LADDER], required: true },
     matched: { type: [String], default: [] },
   },
   { _id: false },
