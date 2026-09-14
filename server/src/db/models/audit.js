@@ -1,6 +1,11 @@
 import mongoose from 'mongoose';
 import { immutablePlugin } from '../plugins/immutable.js';
-import { OUTCOME_LADDER, CONDITION_FIELDS, PROBLEM_CODES } from '../../policy/vocabulary.js';
+import {
+  OUTCOME_LADDER,
+  CONDITION_FIELDS,
+  PROBLEM_CODES,
+  DECISION_REASONS,
+} from '../../policy/vocabulary.js';
 
 const { Schema, model } = mongoose;
 
@@ -28,7 +33,7 @@ const { Schema, model } = mongoose;
  * because the schemas below validate against them -- one definition, two
  * consumers.
  */
-export { OUTCOME_LADDER, CONDITION_FIELDS, PROBLEM_CODES };
+export { OUTCOME_LADDER, CONDITION_FIELDS, PROBLEM_CODES, DECISION_REASONS };
 
 const conditionSchema = new Schema(
   {
@@ -169,6 +174,15 @@ const proposalSchema = new Schema(
       orderNumber: { type: String, required: isResolved },
     },
     resolvedArgs: { type: Schema.Types.Mixed, default: {} },
+    /**
+     * The confirmation text, rendered by the SERVER from the order record when
+     * the proposal is written (FR-6.1) -- never model output. Stored here so the
+     * string the dialog displays and the string the audit says the customer
+     * confirmed are the same value by construction, rather than two renders
+     * that happen to agree. It names catalogue items, a total and a date --
+     * nothing about the person -- which is why it may live in an immutable row.
+     */
+    confirmText: { type: String, required: isResolved, default: null },
     /** REFERENCES ONLY, never snippets — see `evidenceRefSchema`. */
     evidence: { type: [evidenceRefSchema], default: [] },
     model: {
@@ -255,6 +269,52 @@ outcomeSchema.index({ proposalId: 1 }, { unique: true });
 outcomeSchema.index({ tenantId: 1, createdAt: -1 });
 outcomeSchema.index({ tenantId: 1, outcome: 1, createdAt: -1 });
 
+/* ── PolicyDecision — one immutable row per evaluation ─────────────────────
+ *
+ * Added in Phase 10, reversing an alternative Phase 3 section 4 rejected. Phase 3
+ * reasoned that a decision divorced from its proposal is not independently
+ * meaningful, and embedded both decisions on ActionOutcome instead.
+ *
+ * What it did not foresee: a confirm-required proposal is PENDING across two
+ * HTTP requests. Its proposal-time decision must survive until confirmation;
+ * the proposal row is written before evaluation and can never be edited; and
+ * no outcome row may exist yet, because a pending proposal is defined by having
+ * none. Re-deriving the decision at confirm time is not an option either --
+ * the rules may have changed in between, which is ADR 0003's entire point. So
+ * each evaluation is recorded as its own row, referencing its proposal.
+ *
+ * ActionOutcome still embeds copies of both decisions, so an audit row stays
+ * readable without a join. Duplicated data in immutable rows cannot drift.
+ */
+const policyDecisionSchema = new Schema(
+  {
+    tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true },
+    proposalId: { type: Schema.Types.ObjectId, ref: 'ActionProposal', required: true },
+    stage: { type: String, enum: ['proposal', 'execution'], required: true },
+    decision: { type: decisionSchema, required: true },
+    defaulted: { type: Boolean, required: true },
+    /** Why the engine failed closed, as a code -- never the engine's detail,
+     *  which can name rule-authored fields and values. */
+    reason: { type: String, default: null, enum: [null, ...DECISION_REASONS] },
+    clampedFrom: { type: String, default: null, enum: [null, 'auto-execute'] },
+  },
+  { timestamps: { createdAt: true, updatedAt: false } },
+);
+policyDecisionSchema.plugin(immutablePlugin);
+policyDecisionSchema.index({ tenantId: 1, proposalId: 1, stage: 1, createdAt: 1 });
+
+/**
+ * Exactly one PROPOSAL-stage decision per proposal: it is the authorisation a
+ * confirmation relies on, and two would make "which one was offered?"
+ * ambiguous. Execution-stage decisions are deliberately NOT unique -- a confirm
+ * that hit a version conflict is legitimately retried, and each attempt is a
+ * real evaluation worth keeping.
+ */
+policyDecisionSchema.index(
+  { proposalId: 1, stage: 1 },
+  { unique: true, partialFilterExpression: { stage: 'proposal' } },
+);
+
 /* ── TicketEvent ────────────────────────────────────────────────────────── */
 const ticketEventSchema = new Schema(
   {
@@ -308,4 +368,5 @@ ticketEventSchema.index({ tenantId: 1, ticketId: 1, seq: 1 }, { unique: true });
 export const PolicyRule = model('PolicyRule', policyRuleSchema);
 export const ActionProposal = model('ActionProposal', proposalSchema);
 export const ActionOutcome = model('ActionOutcome', outcomeSchema);
+export const PolicyDecision = model('PolicyDecision', policyDecisionSchema);
 export const TicketEvent = model('TicketEvent', ticketEventSchema);

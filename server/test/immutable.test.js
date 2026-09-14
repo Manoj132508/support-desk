@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
-import { ActionProposal, ActionOutcome, TicketEvent, IMMUTABLE_MODELS } from '../src/db/models/index.js';
+import {
+  ActionProposal,
+  ActionOutcome,
+  TicketEvent,
+  PolicyDecision,
+  IMMUTABLE_MODELS,
+} from '../src/db/models/index.js';
 import { BLOCKED_QUERY_OPS, ImmutableError } from '../src/db/plugins/immutable.js';
 
 /**
@@ -15,10 +21,10 @@ import { BLOCKED_QUERY_OPS, ImmutableError } from '../src/db/plugins/immutable.j
  */
 mongoose.set('bufferCommands', false);
 
-const MODELS = { ActionProposal, ActionOutcome, TicketEvent };
+const MODELS = { ActionProposal, ActionOutcome, TicketEvent, PolicyDecision };
 
-test('the three audit collections are the immutable ones', () => {
-  assert.deepEqual(IMMUTABLE_MODELS, ['ActionProposal', 'ActionOutcome', 'TicketEvent']);
+test('the four audit collections are the immutable ones', () => {
+  assert.deepEqual(IMMUTABLE_MODELS, ['ActionProposal', 'ActionOutcome', 'TicketEvent', 'PolicyDecision']);
 });
 
 for (const [name, Model] of Object.entries(MODELS)) {

@@ -97,6 +97,20 @@ export const PROBLEM_CODES = deepFreeze([
   'target_does_not_resolve',
 ]);
 
+/**
+ * Why the engine failed closed. Stored as a code on every PolicyDecision row.
+ *
+ * Kept beside the ladder so the schema's enum and the engine's behaviour have
+ * one definition. A reason the engine could produce but the schema rejected
+ * would fail to record precisely the decisions most worth reviewing -- the ones
+ * where the engine could not decide.
+ */
+export const DECISION_REASONS = deepFreeze([
+  'no_matching_rule',
+  'incomplete_world_state',
+  'invalid_rule',
+]);
+
 /** Position on the ladder; -1 for anything that is not a real outcome. */
 export function restrictiveness(outcome) {
   return OUTCOME_LADDER.indexOf(outcome);
