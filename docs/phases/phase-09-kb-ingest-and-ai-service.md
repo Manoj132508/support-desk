@@ -144,6 +144,23 @@ token overlap. The omission made the double unrepresentative of the thing it sta
 which is the one way a test double can invalidate a whole suite while looking green. Stop-word
 filtering restores the property that matters: unrelated questions score low.
 
+> **Amendment, 2026-09-14 (start of Phase 10).** The "23 Python tests green" above was true of
+> the run it describes and **was luck**. The fake still bucketed tokens with Python's built-in
+> `hash()`, which is salted randomly per process, into 64 buckets — so which tokens collided
+> changed every run. Two days later, on an unchanged commit, the suite failed 4 of 23. A sweep
+> across fixed `PYTHONHASHSEED` values confirmed the cause (seeds 0 and 4 failed, the rest
+> passed).
+>
+> Fixed with a content hash (blake2b) across 1024 buckets, and guarded by
+> `test_fakes_determinism.py`, which spawns interpreters under *different* seeds — an
+> in-process test can never catch this, because inside one process `hash()` is perfectly
+> stable. The guard was checked against the old file and fails on it. Setting
+> `PYTHONHASHSEED` in CI was the tempting alternative and was rejected: it hides a
+> nondeterminism rather than removing it.
+>
+> The same double has now been wrong twice while the suite was green, which is the real lesson:
+> **a test double is code, and it needs its own tests.**
+
 ---
 
 ## 6. Honestly unverified
