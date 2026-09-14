@@ -3,7 +3,7 @@ import { healthRouter } from './health.js';
 import { authRouter } from './auth.js';
 import { conversationsRouter } from './conversations.js';
 import { AppError } from '../errors/AppError.js';
-import { confirmLimiter } from '../middleware/rateLimit.js';
+import { makeProposalsRouter } from './proposals.js';
 import { requireCsrfToken } from '../middleware/csrf.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { requireRole, STAFF, LEADERSHIP } from '../middleware/requireRole.js';
@@ -71,8 +71,7 @@ apiRouter.use('/conversations', conversationsRouter);
  * There is no Idempotency-Key header -- the key is derived server-side from the
  * proposal id (ADR 0003), because one proposal must execute at most once and a
  * client-supplied key would be attacker-controlled. */
-apiRouter.post('/proposals/:id/confirm', confirmLimiter, pending('Phase 10'));
-apiRouter.post('/proposals/:id/reject', pending('Phase 10'));
+apiRouter.use('/proposals', makeProposalsRouter());
 
 /* ── Tickets — FR-8, FR-9, FR-10 (Phase 11) ─────────────────────────────── */
 apiRouter.get('/tickets', requireRole(STAFF), pending('Phase 11'));
