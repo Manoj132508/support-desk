@@ -76,7 +76,7 @@ test('GET /api/auth/me requires a session', async () => {
 test('every error carries the full envelope', async () => {
   await withServer(async (base) => {
     const { body } = await call(base, '/api/nope');
-    for (const field of ['kind', 'message', 'customerMessage', 'detail', 'correlationId']) {
+    for (const field of ['kind', 'message', 'customerMessage', 'detail', 'escalated', 'correlationId']) {
       assert.ok(field in body, `envelope is missing ${field}`);
     }
   });
