@@ -362,10 +362,19 @@ const ticketEventSchema = new Schema(
         'policy_refused',
         'low_confidence',
         'customer_request',
+        // ADR 0010: the boundary could not accept a proposal, so nothing was
+        // decided and a person has to look.
+        'proposal_malformed',
+        // ADR 0010: execution faulted and was recorded as terminal, so the
+        // customer can no longer retry.
+        'execution_failed',
         'agent_action',
         'sla_breach',
       ],
     },
+    /** The proposal behind an escalation, when one caused it -- so the agent
+     *  console can show the blocked action beside the event it produced. */
+    proposalId: { type: Schema.Types.ObjectId, ref: 'ActionProposal', default: null },
     correlationId: { type: String, default: null },
   },
   { timestamps: { createdAt: true, updatedAt: false } },

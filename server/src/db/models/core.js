@@ -202,10 +202,29 @@ const ticketSchema = new Schema(
     note: { type: String, default: null },
     openedAt: { type: Date, default: Date.now },
     closedAt: { type: Date, default: null },
+    /**
+     * True until the ticket is closed. A conversation has at most ONE active
+     * ticket (FR-8.3, ADR 0010), and the partial unique index below is what
+     * enforces it: two escalations racing to create a conversation's first
+     * ticket cannot both succeed, whatever each of them read beforehand.
+     */
+    active: { type: Boolean, required: true, default: true },
+    /**
+     * The seq of this ticket's latest TicketEvent. Every write to the ticket
+     * increments it in the same update and the event takes the new value, so
+     * two writers can never choose the same seq by each reading the last event.
+     */
+    lastEventSeq: { type: Number, required: true, default: 0, min: 0 },
   },
   { timestamps: true },
 );
 ticketSchema.index({ tenantId: 1, currentStatus: 1, openedAt: 1 });
+// The default queue: every ticket still being worked, oldest first.
+ticketSchema.index({ tenantId: 1, active: 1, openedAt: 1 });
+ticketSchema.index(
+  { tenantId: 1, conversationId: 1 },
+  { unique: true, partialFilterExpression: { active: true } },
+);
 
 export const Tenant = model('Tenant', tenantSchema);
 export const User = model('User', userSchema);
