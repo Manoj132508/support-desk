@@ -79,7 +79,7 @@ def retrieve(
     embedder: Embedder,
     store: VectorStore,
     top_k: int = 5,
-    score_threshold: float = 0.35,
+    score_threshold: float = 0.51,
 ) -> RetrievalResult:
     """Embeds the question, fetches the nearest chunks, and decides groundedness.
 

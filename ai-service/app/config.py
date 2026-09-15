@@ -28,10 +28,18 @@ class Settings(BaseSettings):
 
     # Retrieval. The threshold is the single most consequential number in the
     # service: too low and it answers from irrelevant chunks, too high and it
-    # deflects customers who had answerable questions. Tuned against a held-out
-    # set in Phase 13, exactly as Project 1 did -- not guessed here.
+    # offers a person to customers whose question the help centre answers.
+    #
+    # 0.51 was chosen by the Phase 13 escalation eval, by Project 1's method:
+    # selected on the tuning half of a labelled set, checked once on the
+    # held-out half. Against the 0.35 inherited from Project 1, it offers a
+    # person for 5 of 16 answerable questions, a mistake that fails safe. In
+    # return, 2 out-of-scope questions are no longer answered from the help
+    # centre, and 3 customers who needed a person are no longer deflected. The
+    # evidence is thin (17 held-out turns). What no threshold can fix is in the
+    # Phase 13 doc.
     top_k: int = 5
-    score_threshold: float = 0.35
+    score_threshold: float = 0.51
     chunk_size: int = 800
     chunk_overlap: int = 150
 

@@ -1,0 +1,41 @@
+name: Escalation eval
+
+# The retrieval half of the escalation eval, with the real embedding model.
+# Kept OUT of the per-push ci.yml on purpose: it installs torch and downloads a
+# model, which is minutes of setup most changes do not need. It is deterministic
+# (a fixed model on CPU), so it runs weekly and on demand and fails if its
+# numbers drift from the committed baseline.
+#
+# What DOES run on every push, in ci.yml: the policy eval, which gates on an
+# unauthorised action rate of exactly 0, and the intent recogniser's restraint
+# over this eval's dataset, which needs no model.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    name: Escalation eval vs baseline
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ai-service/requirements.txt
+      # CPU wheels: this job has no GPU, and the CUDA build of torch is several
+      # gigabytes that would never be used.
+      - name: Install
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+      - name: Run the eval and check for drift
+        run: python -m evaluation.run --check
