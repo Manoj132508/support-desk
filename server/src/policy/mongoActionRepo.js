@@ -1,12 +1,13 @@
 import mongoose from 'mongoose';
 import * as defaultModels from '../db/models/index.js';
 import { policyScopeFilter, tenantFilter } from '../db/tenantScope.js';
+import { makeMongoTicketRepo } from '../tickets/mongoTicketRepo.js';
 import { ConcurrentModificationError } from './actionService.js';
 
 /**
  * The action service's repository, backed by MongoDB.
  *
- * The service owns SEQUENCING; this module owns the three database guarantees
+ * The service owns SEQUENCING; this module owns the four database guarantees
  * the sequencing depends on, and nothing else:
  *
  *   1. TENANCY in every query (ADR 0005) -- via tenantFilter, never by hand.
@@ -15,6 +16,8 @@ import { ConcurrentModificationError } from './actionService.js';
  *   3. ATOMIC, CONDITIONAL execution -- the order change and the outcome row
  *      commit in one transaction, and only if the order still holds the facts
  *      the decision was made on.
+ *   4. ESCALATION WITH ITS CAUSE -- when a proposal or outcome escalates, the
+ *      record and the ticket commit in one transaction (ADR 0010).
  *
  * Models and the session factory are injectable, for the same reason as
  * everywhere else in this codebase: the conditions on these queries are the
@@ -22,6 +25,9 @@ import { ConcurrentModificationError } from './actionService.js';
  */
 
 const DUPLICATE_KEY = 11000;
+
+/** A race one retry can settle: see mongoTicketRepo.js. */
+const lostRace = (error) => error?.code === DUPLICATE_KEY || error instanceof ConcurrentModificationError;
 
 /**
  * The filter a cancellation write is conditional on.
@@ -55,12 +61,26 @@ export function makeMongoActionRepo({
   models = defaultModels,
   startSession = () => mongoose.startSession(),
   isValidId = (id) => mongoose.isValidObjectId(id),
+  tickets = makeMongoTicketRepo({ models, startSession, isValidId }),
 } = {}) {
   const { Order, PolicyRule, ActionProposal, ActionOutcome, PolicyDecision } = models;
 
   async function findOutcomeByKey(ctx, idempotencyKey, session) {
     const query = ActionOutcome.findOne(tenantFilter(ctx, { idempotencyKey }));
     return (session ? query.session(session) : query).lean();
+  }
+
+  async function inTransaction(work) {
+    const session = await startSession();
+    let result;
+    try {
+      await session.withTransaction(async () => {
+        result = await work(session);
+      });
+      return result;
+    } finally {
+      await session.endSession();
+    }
   }
 
   return {
@@ -85,9 +105,33 @@ export function makeMongoActionRepo({
       return Order.findOne(tenantFilter(ctx, { _id: orderId, customerId })).lean();
     },
 
-    async recordProposal(ctx, doc) {
-      const [proposal] = await ActionProposal.create([tenantFilter(ctx, doc)]);
-      return proposal.toObject();
+    /**
+     * Insert a proposal. With an `escalation`, the proposal row and the ticket
+     * write share one transaction: a proposal nobody could evaluate reaches a
+     * person, or neither is written (ADR 0010).
+     */
+    async recordProposal(ctx, doc, { escalation = null } = {}) {
+      if (!escalation) {
+        const [proposal] = await ActionProposal.create([tenantFilter(ctx, doc)]);
+        return proposal.toObject();
+      }
+
+      const write = () =>
+        inTransaction(async (session) => {
+          const [proposal] = await ActionProposal.create([tenantFilter(ctx, doc)], { session });
+          await tickets.applyEscalation(ctx, { ...escalation, proposalId: proposal._id }, session);
+          return proposal.toObject();
+        });
+
+      try {
+        return await write();
+      } catch (error) {
+        // Another escalation of this conversation created or moved its ticket
+        // first. The aborted transaction wrote nothing, so the whole write is
+        // simply tried again, this time finding that ticket.
+        if (!lostRace(error)) throw error;
+        return write();
+      }
     },
 
     async findProposal(ctx, customerId, proposalId) {
@@ -118,16 +162,45 @@ export function makeMongoActionRepo({
      * application-level "have I seen this key?" check before inserting would be
      * a cache in front of the index, never a substitute for it -- two requests
      * can both see "no" and both insert, and only the index settles that.
+     *
+     * With an `escalation`, the outcome and the ticket write share one
+     * transaction, so no outcome that escalates exists without its ticket.
      */
-    async recordOutcome(ctx, doc) {
+    async recordOutcome(ctx, doc, { escalation = null } = {}) {
+      if (!escalation) {
+        try {
+          const [outcome] = await ActionOutcome.create([tenantFilter(ctx, doc)]);
+          return { outcome: outcome.toObject(), duplicate: false };
+        } catch (error) {
+          if (error?.code !== DUPLICATE_KEY) throw error;
+          const existing = await findOutcomeByKey(ctx, doc.idempotencyKey);
+          if (!existing) throw error;
+          return { outcome: existing, duplicate: true };
+        }
+      }
+
+      const write = () =>
+        inTransaction(async (session) => {
+          const [outcome] = await ActionOutcome.create([tenantFilter(ctx, doc)], { session });
+          await tickets.applyEscalation(ctx, { ...escalation, proposalId: doc.proposalId }, session);
+          return { outcome: outcome.toObject(), duplicate: false };
+        });
+
       try {
-        const [outcome] = await ActionOutcome.create([tenantFilter(ctx, doc)]);
-        return { outcome: outcome.toObject(), duplicate: false };
+        return await write();
       } catch (error) {
-        if (error?.code !== DUPLICATE_KEY) throw error;
+        if (!lostRace(error)) throw error;
+
+        // Looked up OUTSIDE the aborted transaction, whose snapshot could not
+        // see a winner's commit. If the key is held, another request recorded
+        // this proposal's outcome first -- and escalated with it, if it needed
+        // escalating. Its row is the answer.
         const existing = await findOutcomeByKey(ctx, doc.idempotencyKey);
-        if (!existing) throw error;
-        return { outcome: existing, duplicate: true };
+        if (existing) return { outcome: existing, duplicate: true };
+
+        // Otherwise the race lost was over the conversation's ticket. Once
+        // more, now that there is a ticket to append to.
+        return write();
       }
     },
 

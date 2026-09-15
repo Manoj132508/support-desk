@@ -6,16 +6,19 @@ import { AppError, KIND } from '../errors/AppError.js';
  * Two responsibilities, and the second is a safety property rather than
  * tidiness.
  *
- * 1. ONE SHAPE. `{ kind, message, customerMessage, detail, correlationId }`,
- *    always, so the client's `api.js` never has to guess. An unknown throw
- *    becomes a `fault` -- never a `refused`, because inventing a policy
- *    decision that never happened would write a false story into the UI and
- *    into anyone's reading of the audit.
+ * 1. ONE SHAPE. `{ kind, message, customerMessage, detail, escalated,
+ *    correlationId }`, always, so the client's `api.js` never has to guess. An
+ *    unknown throw becomes a `fault` -- never a `refused`, because inventing a
+ *    policy decision that never happened would write a false story into the UI
+ *    and into anyone's reading of the audit.
  *
  * 2. `detail` IS STRIPPED FOR CUSTOMER CALLERS. ADR 0007 separates the two
  *    channels at the data layer; this separates them at the transport layer.
  *    Doing it here rather than in each route means a route CANNOT leak a rule
  *    id by forgetting -- there is one place to get it right, and it is tested.
+ *
+ * `escalated` was added in Phase 11 (ADR 0010): whether a colleague is already
+ * coming. It is false unless the error says otherwise.
  */
 
 function isStaff(req) {
@@ -39,6 +42,7 @@ export function errorEnvelope(err, req, res, next) {
       message: 'Not found',
       customerMessage: null,
       detail: null,
+      escalated: false,
       correlationId: req.correlationId ?? null,
     });
   }
@@ -63,6 +67,7 @@ export function errorEnvelope(err, req, res, next) {
     message: appError.message,
     customerMessage: appError.customerMessage,
     detail: isStaff(req) ? appError.detail : null,
+    escalated: appError.escalated === true,
     correlationId: req.correlationId ?? null,
   });
 }

@@ -25,7 +25,7 @@ const STATUS_BY_KIND = {
 };
 
 export class AppError extends Error {
-  constructor(kind, { message, customerMessage, detail, status, expected } = {}) {
+  constructor(kind, { message, customerMessage, detail, status, expected, escalated } = {}) {
     super(message ?? kind);
     this.name = 'AppError';
     this.kind = kind;
@@ -34,6 +34,13 @@ export class AppError extends Error {
     this.customerMessage = customerMessage ?? null;
     /** Rule key, version, matched conditions. Stripped for customer callers. */
     this.detail = detail ?? null;
+    /**
+     * Whether a colleague has already been brought in (ADR 0010). A refusal at
+     * execution arrives as an error, so the customer's screen learns here
+     * whether to say a colleague is coming or to offer one. Only a literal
+     * `true` counts: a promise to a customer is never inferred.
+     */
+    this.escalated = escalated === true;
     /**
      * Faults are bugs; the other three are not. Drives whether a stack is
      * logged. Overridable because a few `fault`-kinded responses are known,

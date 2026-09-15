@@ -55,7 +55,12 @@ test('confirmation-required becomes a proposal frame with exactly what the dialo
 });
 
 test('a refusal becomes a policy notice carrying only the rule’s customer text', () => {
-  const frames = framesForProposalResult({ kind: 'refused', proposalId: 'p2', decision: { ...decision, outcome: 'refuse' } });
+  const frames = framesForProposalResult({
+    kind: 'refused',
+    proposalId: 'p2',
+    decision: { ...decision, outcome: 'refuse' },
+    escalated: false,
+  });
   assert.deepEqual(frames, [
     {
       event: 'policy',
@@ -64,6 +69,7 @@ test('a refusal becomes a policy notice carrying only the rule’s customer text
         outcome: 'refused_at_proposal',
         proposalId: 'p2',
         customerMessage: decision.customerMessage,
+        escalated: false,
       },
     },
   ]);
@@ -71,12 +77,13 @@ test('a refusal becomes a policy notice carrying only the rule’s customer text
 });
 
 test('an escalation renders in the policy language too, with its precise outcome', () => {
-  const [{ event, data }] = framesForProposalResult({ kind: 'escalated', proposalId: 'p3', decision });
+  const [{ event, data }] = framesForProposalResult({ kind: 'escalated', proposalId: 'p3', decision, escalated: true });
   assert.equal(event, 'policy');
   // `kind` stays inside the client's four-kind taxonomy, so it renders as a
   // policy notice rather than an error (Phase 4 §5).
   assert.equal(data.kind, 'refused');
   assert.equal(data.outcome, 'escalated_at_proposal');
+  assert.equal(data.escalated, true);
 });
 
 test('a fail-closed decision with no customer text sends none, and the client falls back', () => {
@@ -84,20 +91,33 @@ test('a fail-closed decision with no customer text sends none, and the client fa
     kind: 'escalated',
     proposalId: 'p4',
     decision: { ...decision, customerMessage: null },
+    escalated: true,
   });
   assert.equal(data.customerMessage, null);
 });
 
-test('a malformed attempt tells the customer nothing about why', () => {
+test('a malformed attempt tells the customer nothing about why, only that a colleague is coming', () => {
   const frames = framesForProposalResult({
     kind: 'malformed',
     proposalId: 'p5',
     codes: ['asserted_authorisation'],
+    escalated: true,
   });
   assert.deepEqual(frames, [
-    { event: 'policy', data: { kind: 'malformed', outcome: null, proposalId: 'p5', customerMessage: null } },
+    {
+      event: 'policy',
+      data: { kind: 'malformed', outcome: null, proposalId: 'p5', customerMessage: null, escalated: true },
+    },
   ]);
   assertNothingInternal(frames);
+});
+
+test('ADR 0010: "a colleague is coming" is never inferred from the kind of result, only reported by the service', () => {
+  // An escalated result that does not say its ticket exists must not promise one.
+  for (const kind of ['escalated', 'refused', 'malformed']) {
+    const [{ data }] = framesForProposalResult({ kind, proposalId: 'p7', decision });
+    assert.equal(data.escalated, false, kind);
+  }
 });
 
 test('an unrecognised result is a programming error, never an invented decision', () => {

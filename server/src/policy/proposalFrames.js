@@ -17,10 +17,17 @@
  * What is never included, because this stream serves customers (ADR 0007):
  * rule keys, versions, matched conditions, problem codes, idempotency keys,
  * internal reasons. The rule's own `customerMessage` is the only policy text a
- * customer sees.
+ * customer sees, and `escalated` says whether a colleague is already coming.
  */
 
 export const DOWNSTREAM_PROPOSAL_EVENTS = Object.freeze(['proposal', 'policy']);
+
+/**
+ * Taken from the action service's result, never inferred from the kind of
+ * result. The screen tells a customer a colleague is coming only when the
+ * service reports that the ticket exists (ADR 0010).
+ */
+const escalatedIn = (result) => result.escalated === true;
 
 export function framesForProposalResult(result) {
   switch (result?.kind) {
@@ -54,6 +61,7 @@ export function framesForProposalResult(result) {
             outcome: result.kind === 'refused' ? 'refused_at_proposal' : 'escalated_at_proposal',
             proposalId: String(result.proposalId),
             customerMessage: result.decision?.customerMessage ?? null,
+            escalated: escalatedIn(result),
           },
         },
       ];
@@ -61,7 +69,8 @@ export function framesForProposalResult(result) {
     case 'malformed':
       // No customer message: nothing about WHY a proposal was malformed is
       // customer information, and the codes would describe the boundary. The
-      // client falls back to its generic text and offers a person.
+      // client falls back to its generic text, and the service has already
+      // brought in a colleague (ADR 0010).
       return [
         {
           event: 'policy',
@@ -70,6 +79,7 @@ export function framesForProposalResult(result) {
             outcome: null,
             proposalId: String(result.proposalId),
             customerMessage: null,
+            escalated: escalatedIn(result),
           },
         },
       ];

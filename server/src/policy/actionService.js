@@ -6,6 +6,7 @@ import {
   UNRESOLVED_TARGET,
 } from './proposal.js';
 import { AppError } from '../errors/AppError.js';
+import { automaticEscalationReason } from '../tickets/escalation.js';
 
 /**
  * PROPOSE → CONFIRM → EXECUTE. The orchestration around the pure engine.
@@ -63,6 +64,21 @@ function detailFor(decision, stage) {
 }
 
 const noop = () => {};
+
+/**
+ * The escalation to commit with a record, or null when ADR 0010 says there is
+ * none. The system escalates as itself: nobody asked; a rule, a malformed
+ * proposal or a failure left the request for a person.
+ */
+function escalationFor({ conversationId, customerId, correlationId }, reason) {
+  if (!reason) return null;
+  if (!conversationId) {
+    // A ticket belongs to a conversation. Silently skipping the escalation
+    // instead would break the promise the customer is about to read.
+    throw new TypeError('An escalation needs the conversation it belongs to');
+  }
+  return { conversationId, customerId, reason, actor: { kind: 'system' }, correlationId: correlationId ?? null };
+}
 
 export function makeActionService({ repo, clock = () => new Date(), log = noop } = {}) {
   if (!repo) throw new TypeError('makeActionService requires a repo');
@@ -134,13 +150,19 @@ export function makeActionService({ repo, clock = () => new Date(), log = noop }
     // Step 1: SHAPE. A malformed attempt is recorded, as codes, and goes no
     // further -- the engine never sees anything that is not exactly the right
     // shape.
+    // A malformed attempt reaches a person, with the proposal row and the
+    // ticket committed together: nothing was decided, so nobody has answered
+    // the customer (ADR 0010).
+    const malformedEscalation = () =>
+      escalationFor(common, automaticEscalationReason({ validity: 'malformed' }));
+
     const shape = validateProposalShape(raw);
     if (!shape.ok) {
-      const record = await repo.recordProposal(ctx, {
-        ...common,
-        validity: 'malformed',
-        problemCodes: shape.codes,
-      });
+      const record = await repo.recordProposal(
+        ctx,
+        { ...common, validity: 'malformed', problemCodes: shape.codes },
+        { escalation: malformedEscalation() },
+      );
       // The readable messages echo model-supplied text, so they go to the
       // logs and never into the immutable row.
       log('proposal_malformed', {
@@ -149,7 +171,7 @@ export function makeActionService({ repo, clock = () => new Date(), log = noop }
         problems: shape.problems.map((p) => p.message),
         correlationId,
       });
-      return { kind: 'malformed', proposalId: record._id, codes: shape.codes };
+      return { kind: 'malformed', proposalId: record._id, codes: shape.codes, escalated: true };
     }
 
     // Resolution, scoped to this tenant AND this customer (ADR 0005). Another
@@ -157,12 +179,12 @@ export function makeActionService({ repo, clock = () => new Date(), log = noop }
     // both are recorded identically.
     const order = await repo.findCustomerOrder(ctx, customerId, shape.value.target.orderNumber);
     if (!order) {
-      const record = await repo.recordProposal(ctx, {
-        ...common,
-        validity: 'malformed',
-        problemCodes: [UNRESOLVED_TARGET],
-      });
-      return { kind: 'malformed', proposalId: record._id, codes: [UNRESOLVED_TARGET] };
+      const record = await repo.recordProposal(
+        ctx,
+        { ...common, validity: 'malformed', problemCodes: [UNRESOLVED_TARGET] },
+        { escalation: malformedEscalation() },
+      );
+      return { kind: 'malformed', proposalId: record._id, codes: [UNRESOLVED_TARGET], escalated: true };
     }
 
     const resolved = resolveTarget(shape.value, order);
@@ -206,15 +228,30 @@ export function makeActionService({ repo, clock = () => new Date(), log = noop }
     // arrive here; if it somehow did, the safe reading is "a human looks", not
     // "proceed".
     const refused = decision.outcome === 'refuse';
-    await repo.recordOutcome(ctx, {
-      proposalId: proposal._id,
-      outcome: refused ? 'refused_at_proposal' : 'escalated_at_proposal',
-      decisionAtProposal: toStoredDecision(decision),
-      decisionAtExecution: null,
-      idempotencyKey: idempotencyKeyFor(proposal._id),
-    });
 
-    return { kind: refused ? 'refused' : 'escalated', proposalId: proposal._id, decision };
+    // ADR 0010: agent-only always reaches a person; a refusal does only when
+    // its rule left the customer without an explanation. The outcome and the
+    // ticket commit together, so the customer is told a colleague is coming
+    // only once the ticket exists.
+    const reason = automaticEscalationReason({ validity: 'resolved', decision });
+    await repo.recordOutcome(
+      ctx,
+      {
+        proposalId: proposal._id,
+        outcome: refused ? 'refused_at_proposal' : 'escalated_at_proposal',
+        decisionAtProposal: toStoredDecision(decision),
+        decisionAtExecution: null,
+        idempotencyKey: idempotencyKeyFor(proposal._id),
+      },
+      { escalation: escalationFor(common, reason) },
+    );
+
+    return {
+      kind: refused ? 'refused' : 'escalated',
+      proposalId: proposal._id,
+      decision,
+      escalated: Boolean(reason),
+    };
   }
 
   /* ── Shared checks for confirm and reject ────────────────────────────── */
@@ -282,14 +319,27 @@ export function makeActionService({ repo, clock = () => new Date(), log = noop }
       idempotencyKey: idempotencyKeyFor(proposal._id),
     };
 
+    // The customer's conversation, for any escalation execution leads to.
+    const escalationContext = {
+      conversationId: proposal.conversationId,
+      customerId,
+      correlationId: ctx?.correlationId ?? null,
+    };
+
     if (decisionAtExecution.outcome !== 'confirm-required') {
       // Authorised, then refused. A first-class outcome, recorded with BOTH
       // decisions so the sequence is legible afterwards -- not swept into a
       // generic error.
-      const { outcome, duplicate } = await repo.recordOutcome(ctx, {
-        ...outcomeBase,
-        outcome: 'refused_at_execution',
-      });
+      //
+      // ADR 0010 applies exactly as it does at proposal: an order that shipped
+      // in between turns the decision agent-only, and a person is brought in
+      // with the outcome.
+      const reason = automaticEscalationReason({ validity: 'resolved', decision: decisionAtExecution });
+      const { outcome, duplicate } = await repo.recordOutcome(
+        ctx,
+        { ...outcomeBase, outcome: 'refused_at_execution' },
+        { escalation: escalationFor(escalationContext, reason) },
+      );
       // A concurrent confirmation may have executed first under the old facts.
       // If so, that result stands, and this request reports it.
       if (duplicate && outcome.outcome === 'executed') {
@@ -300,6 +350,9 @@ export function makeActionService({ repo, clock = () => new Date(), log = noop }
         {
           customerMessage: decisionAtExecution.customerMessage,
           detail: detailFor(decisionAtExecution, 'execution'),
+          // A duplicate refusal was recorded by another request under the
+          // same rule, and escalated with it if it needed to.
+          escalated: Boolean(reason) && (!duplicate || outcome.outcome === 'refused_at_execution'),
         },
       );
     }
@@ -343,13 +396,22 @@ export function makeActionService({ repo, clock = () => new Date(), log = noop }
        * The error MESSAGE is not stored: driver messages can include values
        * from the failed write, and this row can never be edited. A code only.
        */
+      // ADR 0010: a terminal failure cannot be retried, so its ticket commits
+      // with it -- which is what "so an agent looks" above now means in fact.
+      // If the failure cannot be recorded at all, nothing is escalated either,
+      // and nothing stops the customer trying again.
+      const reason = automaticEscalationReason({
+        validity: 'resolved',
+        decision: decisionAtExecution,
+        outcome: 'failed',
+      });
       let recorded = null;
       try {
-        recorded = await repo.recordOutcome(ctx, {
-          ...outcomeBase,
-          outcome: 'failed',
-          error: { code: 'execution_fault', message: null },
-        });
+        recorded = await repo.recordOutcome(
+          ctx,
+          { ...outcomeBase, outcome: 'failed', error: { code: 'execution_fault', message: null } },
+          { escalation: escalationFor(escalationContext, reason) },
+        );
       } catch {
         // The database may be the thing that failed. The original error is the
         // one worth reporting; this one would only obscure it.
@@ -361,7 +423,9 @@ export function makeActionService({ repo, clock = () => new Date(), log = noop }
       }
 
       log('execution_fault', { proposalId: proposal._id, error: error.message });
-      throw AppError.fault('Execution failed');
+      throw AppError.fault('Execution failed', {
+        escalated: Boolean(recorded) && (!recorded.duplicate || recorded.outcome.outcome === 'failed'),
+      });
     }
   }
 

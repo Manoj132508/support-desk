@@ -12,10 +12,12 @@ import { ConcurrentModificationError } from '../../src/policy/actionService.js';
  *   - execution is atomic: the order change and the outcome insert happen
  *     together or not at all, with no await between check and write;
  *   - execution is conditional on the order version, like optimistic
- *     concurrency in Mongoose.
+ *     concurrency in Mongoose;
+ *   - an escalation commits with the record that caused it: if the escalation
+ *     cannot be written, neither is the proposal or outcome (ADR 0010).
  *
  * And it can be told to misbehave in the ways a real database does: a version
- * conflict, a fault, and a commit followed by an error.
+ * conflict, a fault, a commit followed by an error, and a failed ticket write.
  */
 
 const clone = (value) => (value === null || value === undefined ? value : structuredClone(value));
@@ -32,8 +34,10 @@ export function makeFakeActionRepo({ orders = [], rules = [] } = {}) {
     decisions: [],
     outcomesByKey: new Map(),
     outcomesByProposal: new Map(),
+    escalations: [],
     conflictNextExecute: false,
     failNextExecute: null, // 'fault' | 'ambiguous-commit'
+    failNextEscalation: false,
   };
 
   function insertOutcome(doc) {
@@ -43,6 +47,18 @@ export function makeFakeActionRepo({ orders = [], rules = [] } = {}) {
     state.outcomesByKey.set(doc.idempotencyKey, outcome);
     state.outcomesByProposal.set(String(doc.proposalId), outcome);
     return { outcome: clone(outcome), duplicate: false };
+  }
+
+  /** Called BEFORE the record it accompanies is stored, and synchronously, so a
+   *  failure here leaves nothing behind -- the in-memory stand-in for rolling
+   *  back the shared transaction. */
+  function escalate(escalation, proposalId) {
+    calls.push(`escalate:${escalation.reason}`);
+    if (state.failNextEscalation) {
+      state.failNextEscalation = false;
+      throw new Error('ticket write failed');
+    }
+    state.escalations.push({ ...structuredClone(escalation), proposalId });
   }
 
   const repo = {
@@ -75,9 +91,10 @@ export function makeFakeActionRepo({ orders = [], rules = [] } = {}) {
       return order && order.customerId === customerId ? clone(order) : null;
     },
 
-    async recordProposal(ctx, doc) {
+    async recordProposal(ctx, doc, { escalation = null } = {}) {
       calls.push('recordProposal');
       const proposal = { _id: nextId('proposal'), ...structuredClone(doc) };
+      if (escalation) escalate(escalation, proposal._id);
       state.proposals.set(proposal._id, proposal);
       return clone(proposal);
     },
@@ -113,8 +130,12 @@ export function makeFakeActionRepo({ orders = [], rules = [] } = {}) {
       return clone(state.outcomesByProposal.get(String(proposalId)) ?? null);
     },
 
-    async recordOutcome(ctx, doc) {
+    async recordOutcome(ctx, doc, { escalation = null } = {}) {
       calls.push(`recordOutcome:${doc.outcome}`);
+      // A duplicate key means another request recorded this proposal's outcome
+      // first, and escalated with it if it needed escalating. Nothing more here.
+      if (state.outcomesByKey.has(doc.idempotencyKey)) return insertOutcome(doc);
+      if (escalation) escalate(escalation, doc.proposalId);
       return insertOutcome(doc);
     },
 
