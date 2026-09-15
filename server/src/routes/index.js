@@ -7,6 +7,7 @@ import { makeProposalsRouter } from './proposals.js';
 import { makeTicketsRouter } from './tickets.js';
 import { makePoliciesRouter } from './policies.js';
 import { makeAuditRouter } from './audit.js';
+import { makeAccountRouter } from './account.js';
 import { requireCsrfToken } from '../middleware/csrf.js';
 import { authenticate } from '../middleware/authenticate.js';
 
@@ -81,6 +82,11 @@ apiRouter.use('/proposals', makeProposalsRouter());
  * anyway, so asking for a person is keyed by the conversation (above). */
 apiRouter.use('/tickets', makeTicketsRouter());
 
+/* ── Account — FR-13.4 (Phase 12) ─────────────────────────────────────────
+ * A customer deleting their own account. Below the line, so it is
+ * authenticated and CSRF-protected by position. */
+apiRouter.use('/account', makeAccountRouter());
+
 /* ── Policy and audit — FR-11, FR-12 (Phase 10) ─────────────────────────
  * Leads may read both; only admins change rules. The roles are enforced inside
  * each router. POST /api/policies is an addition to the Phase 6 contract, which
@@ -105,6 +111,7 @@ export const CONTRACT_ROUTES = [
   ['get', '/api/tickets'],
   ['get', '/api/tickets/abc'],
   ['post', '/api/tickets/abc/status'],
+  ['post', '/api/account/delete'],
   ['get', '/api/policies'],
   ['post', '/api/policies'],
   ['put', '/api/policies/abc'],
