@@ -4,6 +4,7 @@ import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Button from './components/primitives/Button.jsx';
 import LoginPage from './routes/LoginPage.jsx';
 import ScaffoldPage from './routes/ScaffoldPage.jsx';
+import ConversationPage from './routes/ConversationPage.jsx';
 
 /**
  * Route map, mirroring the seven screens in Phase 4 section 3.
@@ -12,6 +13,22 @@ import ScaffoldPage from './routes/ScaffoldPage.jsx';
  * policy and audit narrow further to lead/admin -- the same role split as the
  * actor table in Phase 1 section 2.
  */
+
+/**
+ * "/" depends on who is asking. Customers talk to the assistant; staff work the
+ * console.
+ *
+ * Not a role gate on the conversation route: ProtectedRoute sends a user
+ * without the right role back to "/", which for staff would be a redirect loop.
+ * And a staff member on the customer screen would be invited to raise proposals
+ * that the server drops on a staff turn anyway.
+ */
+function HomeRoute() {
+  const { user } = useAuth();
+  if (user?.role === 'customer') return <ConversationPage />;
+  return <Navigate to="/console" replace />;
+}
+
 function AppRoutes() {
   const { user, bootstrapping, logout } = useAuth();
 
@@ -43,7 +60,7 @@ function AppRoutes() {
             path="/"
             element={
               <ProtectedRoute>
-                <ScaffoldPage title="Conversation" phase="Phase 9 and 10" />
+                <HomeRoute />
               </ProtectedRoute>
             }
           />
@@ -61,7 +78,7 @@ function AppRoutes() {
             path="/console/policies"
             element={
               <ProtectedRoute roles={['lead', 'admin']}>
-                <ScaffoldPage title="Policy rules" phase="Phase 10" />
+                <ScaffoldPage title="Policy rules" phase="Phase 11" />
               </ProtectedRoute>
             }
           />
@@ -70,7 +87,7 @@ function AppRoutes() {
             path="/console/audit"
             element={
               <ProtectedRoute roles={['lead', 'admin']}>
-                <ScaffoldPage title="Audit" phase="Phase 10" />
+                <ScaffoldPage title="Audit" phase="Phase 11" />
               </ProtectedRoute>
             }
           />
