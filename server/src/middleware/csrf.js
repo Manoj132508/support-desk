@@ -43,10 +43,23 @@ export function requireCsrfToken(req, res, next) {
   const headerToken = req.get(CSRF_HEADER);
 
   if (!cookieToken || !headerToken || !safeCompare(cookieToken, headerToken)) {
+    // A security event worth a line in the log -- but a line, not a stack
+    // trace: a forged request is the defence working, not a bug (Phase 12).
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'csrf_rejected',
+        path: req.originalUrl ?? null,
+        userId: req.user?.id ?? null,
+        correlationId: req.correlationId ?? null,
+      }),
+    );
     // `fault`, not `refused`. A refusal means a POLICY RULE declined an action
     // and renders in the policy language; a failed CSRF check means the request
     // was not genuine, which is not a decision about anything.
-    return next(new AppError('fault', { message: 'CSRF token missing or invalid', status: 403 }));
+    return next(
+      new AppError('fault', { message: 'CSRF token missing or invalid', status: 403, expected: true }),
+    );
   }
 
   return next();

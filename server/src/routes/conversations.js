@@ -3,10 +3,12 @@ import { AppError } from '../errors/AppError.js';
 import { scoped } from '../db/tenantScope.js';
 import { Conversation, Message } from '../db/models/index.js';
 import { streamTurn } from '../services/aiClient.js';
+import { HISTORY_READ_LIMIT, turnHistory } from '../services/turnPayload.js';
 import { openSseStream, relayFrames, sseFrame } from '../services/sse.js';
 import { makeActionService } from '../policy/actionService.js';
 import { makeMongoActionRepo } from '../policy/mongoActionRepo.js';
 import { framesForProposalResult } from '../policy/proposalFrames.js';
+import { messageLimiter } from '../middleware/rateLimit.js';
 
 export const conversationsRouter = Router();
 
@@ -98,6 +100,8 @@ conversationsRouter.get(
  */
 conversationsRouter.post(
   '/:id/messages',
+  // Each message costs a call to the AI service (Phase 12, OWASP API4).
+  messageLimiter,
   handle(async (req, res) => {
     const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
     if (!content) throw AppError.malformed('A message needs content');
@@ -108,22 +112,20 @@ conversationsRouter.post(
       throw AppError.notFound();
     }
 
-    await scoped(Message, req).create({
+    const [question] = await scoped(Message, req).create({
       conversationId: conversation._id,
       role: 'customer',
       content,
       correlationId: req.correlationId,
     });
 
-    const history = (
-      await scoped(Message, req)
-        .find({ conversationId: conversation._id })
-        .sort({ createdAt: 1 })
-        .limit(20)
-    ).map((message) => ({
-      role: message.role === 'customer' ? 'user' : 'assistant',
-      content: message.content,
-    }));
+    // NFR-4: the AI service receives the question and the few exchanges its
+    // prompt uses -- the LATEST ones, read newest first (services/turnPayload.js).
+    const recent = await scoped(Message, req)
+      .find({ conversationId: conversation._id })
+      .sort({ createdAt: -1 })
+      .limit(HISTORY_READ_LIMIT);
+    const history = turnHistory(recent, { exclude: question._id });
 
     const controller = new AbortController();
     let cancelled = false;
@@ -160,7 +162,7 @@ conversationsRouter.post(
       seen = await relayFrames(
         streamTurn({
           question: content,
-          history: history.slice(0, -1),
+          history,
           correlationId: req.correlationId,
           signal: controller.signal,
         }),

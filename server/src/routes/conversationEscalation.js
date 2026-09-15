@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { AppError } from '../errors/AppError.js';
+import { escalationLimiter } from '../middleware/rateLimit.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { makeTicketService } from '../tickets/ticketService.js';
 import { makeMongoTicketRepo } from '../tickets/mongoTicketRepo.js';
@@ -17,10 +18,13 @@ import { makeMongoTicketRepo } from '../tickets/mongoTicketRepo.js';
  * optional `proposalId` in the body is a claim that the customer is asking from
  * a refusal; the service believes it only if it can see that refusal.
  *
+ * Rate limited per user (Phase 12), AFTER the role check, so a staff member's
+ * refused call does not count against anyone.
+ *
  * Its own router, mounted ahead of the other conversation routes, so it can be
- * tested with a fake service.
+ * tested with a fake service and a fake limiter.
  */
-export function makeConversationEscalationRouter({ service } = {}) {
+export function makeConversationEscalationRouter({ service, limiter = escalationLimiter } = {}) {
   const tickets = service ?? makeTicketService({ repo: makeMongoTicketRepo() });
   const router = Router();
   const handle = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -28,6 +32,7 @@ export function makeConversationEscalationRouter({ service } = {}) {
   router.post(
     '/:id/escalate',
     requireRole('customer'),
+    limiter,
     handle(async (req, res) => {
       // A customer login with no linked profile has no conversations to
       // escalate. "Not found" is true, and describes nothing about the account.
