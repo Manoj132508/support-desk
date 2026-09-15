@@ -1,9 +1,9 @@
 # Phase 12 — Security and privacy
 
 **Project 3 · AI Support Desk**
-Status: **in progress.** Delivers NFR-3 (security) and NFR-4 (privacy), and FR-13.4 (account
-deletion), which the traceability table gave to Phase 8 and no phase built. This document records
-findings as they are made rather than reconstructing them at the end.
+Status: **complete.** Delivers NFR-3 (security) and NFR-4 (privacy), and FR-13.4 (account
+deletion), which the traceability table gave to Phase 8 and no phase built. What remains unverified
+or deferred is in §7.
 
 ---
 
@@ -127,3 +127,32 @@ answered, and whatever the customer chose to type in it travels with it.
   hosting must set its own (Phase 15).
 - **No penetration test.** The OWASP pass is a review of code and tests, not an attack on a running
   deployment.
+
+---
+
+## 8. Verification
+
+**Tests.** Server **503** (+48), client **136** (+21), AI service **84** (+6). Every finding in §3
+has at least one test. Two were also demonstrated before they were fixed: the old token check
+ACCEPTED an HS512 token signed with the secret, and a malformed conversation id threw a cast error
+naming its model.
+
+**One test double had to be corrected on the way.** The first fake password check in the deletion
+service's tests ignored the password it was given, so a non-string password "matched" and a test the
+service was right to fail went red for the wrong reason. The fake is now as strict as bcrypt. It is
+the third time this project has found a double more forgiving than the real thing (after Phase 9's
+embedder and Phase 10's hashing), and the lesson is the same: a fake is code, and it needs to be as
+strict as what it replaces.
+
+**In the browser**, against an API stubbed inside the page, since no API can run here without a
+replica set:
+
+- *Sign-in.* A wrong organisation sent `tenantSlug: "globex"` and showed "That organisation, email
+  and password combination was not recognised." The right one signed in, and the header gained an
+  Account link.
+- *Account deletion.* The page listed what is removed and what is kept. With a password typed, the
+  button stayed disabled until the acknowledgement was ticked. A wrong password showed the button
+  busy while the request was in flight, then "That password was not right. Your account has not been
+  changed.", leaving the page as it was. The right password left the signed-in screens for the
+  sign-in page, which said "Your account has been deleted." and showed no Account link. At 375px the
+  page does not scroll sideways.
