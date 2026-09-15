@@ -22,6 +22,14 @@ import { config } from '../config/env.js';
  */
 const ISSUER = 'asd'; // ai-support-desk
 
+/**
+ * Pinned, in both directions (Phase 12, OWASP A02). Without `algorithms` on
+ * verify, the library accepts any HMAC variant made with our secret -- so what
+ * counts as a valid session token would be chosen by whoever wrote the token's
+ * header, not by us.
+ */
+const ALGORITHM = 'HS256';
+
 export function signSessionToken(userId) {
   if (!config.jwtSecret) {
     // Never fall back to a development secret. A signing key with a default is
@@ -29,6 +37,7 @@ export function signSessionToken(userId) {
     throw new Error('JWT_SECRET is not configured');
   }
   return jwt.sign({ sub: String(userId) }, config.jwtSecret, {
+    algorithm: ALGORITHM,
     expiresIn: config.jwtExpiresIn,
     issuer: ISSUER,
   });
@@ -36,8 +45,9 @@ export function signSessionToken(userId) {
 
 /**
  * Returns null on ANY failure -- bad signature, expired, malformed, wrong
- * issuer -- because the caller must not distinguish them. "Expired" versus
- * "invalid signature" tells an attacker which half of their forgery was wrong.
+ * issuer, wrong algorithm -- because the caller must not distinguish them.
+ * "Expired" versus "invalid signature" tells an attacker which half of their
+ * forgery was wrong.
  *
  * `issuer` is verified too, so a token signed with the same secret by another
  * service in the estate is not accepted here.
@@ -45,7 +55,7 @@ export function signSessionToken(userId) {
 export function verifySessionToken(token) {
   if (!config.jwtSecret) return null;
   try {
-    return jwt.verify(token, config.jwtSecret, { issuer: ISSUER });
+    return jwt.verify(token, config.jwtSecret, { issuer: ISSUER, algorithms: [ALGORITHM] });
   } catch {
     return null;
   }

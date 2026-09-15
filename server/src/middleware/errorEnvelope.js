@@ -64,7 +64,12 @@ export function errorEnvelope(err, req, res, next) {
 
   res.status(appError.status).json({
     kind: appError.kind,
-    message: appError.message,
+    // An UNEXPECTED error's message is for the log above, never for the caller
+    // (OWASP A05). It can carry whatever the failure happened to include -- a
+    // driver error quoting the value that broke a unique index, a cast error
+    // naming a model, a hostname -- and nothing in it helps the caller. Expected
+    // errors keep theirs: those messages were written to be read.
+    message: appError.expected ? appError.message : 'Something went wrong',
     customerMessage: appError.customerMessage,
     detail: isStaff(req) ? appError.detail : null,
     escalated: appError.escalated === true,

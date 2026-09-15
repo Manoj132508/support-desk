@@ -38,3 +38,29 @@ export const config = {
   /** A support message is not a file upload. */
   bodyLimit: '64kb',
 };
+
+/**
+ * What would make this configuration unsafe in PRODUCTION. Empty means nothing.
+ *
+ * Checked at startup (index.js), so a deployment missing a secret fails where
+ * whoever deployed it can see it, instead of running with an empty signing key
+ * or an AI service that answers anyone. Development stays permissive on purpose
+ * -- its ports are localhost-only -- which is exactly why production must not
+ * inherit it. Problems name variables, never values.
+ */
+export const MIN_SECRET_LENGTH = 32;
+
+export function productionConfigProblems(value = config) {
+  const problems = [];
+  if ((value.jwtSecret ?? '').length < MIN_SECRET_LENGTH) {
+    problems.push(`JWT_SECRET must be at least ${MIN_SECRET_LENGTH} characters`);
+  }
+  if ((value.aiServiceToken ?? '').length < MIN_SECRET_LENGTH) {
+    problems.push(
+      `AI_SERVICE_TOKEN must be at least ${MIN_SECRET_LENGTH} characters, and the same on both tiers`,
+    );
+  }
+  if (!value.mongodbUri) problems.push('MONGODB_URI must be set');
+  if (!value.aiServiceUrl) problems.push('AI_SERVICE_URL must be set');
+  return problems;
+}

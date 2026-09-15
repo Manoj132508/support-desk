@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { AppError } from '../errors/AppError.js';
 
 /**
@@ -41,14 +42,24 @@ export function scoped(Model, ctx) {
   const tenantId = requireTenant(ctx);
   const withTenant = (filter = {}) => ({ ...filter, tenantId });
 
+  /*
+   * An id that cannot be an ObjectId is answered as "no such record" BEFORE
+   * any query. Left to Mongoose it becomes a CastError: a 500 whose message
+   * names the model and echoes the input, where every other miss is a plain 404
+   * (Phase 12). `{ $in: [] }` matches nothing, so `findById` keeps returning a
+   * query that resolves to null.
+   */
+  const idFilter = (id) => (mongoose.isValidObjectId(id) ? { _id: id } : { _id: { $in: [] } });
+
   return {
     find: (filter, options) => Model.find(withTenant(filter), null, options),
     findOne: (filter, options) => Model.findOne(withTenant(filter), null, options),
-    findById: (id, options) => Model.findOne(withTenant({ _id: id }), null, options),
+    findById: (id, options) => Model.findOne(withTenant(idFilter(id)), null, options),
     countDocuments: (filter) => Model.countDocuments(withTenant(filter)),
 
     /** The common case: fetch one, and treat absent and foreign identically. */
     async findByIdOrNotFound(id, options) {
+      if (!mongoose.isValidObjectId(id)) throw AppError.notFound();
       const doc = await Model.findOne(withTenant({ _id: id }), null, options);
       if (!doc) throw AppError.notFound();
       return doc;

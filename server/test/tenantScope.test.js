@@ -36,14 +36,15 @@ test('every read carries the tenant in the filter', () => {
 
   repo.find({ status: 'open' });
   repo.findOne({ orderNumber: '1043' });
-  repo.findById('o1');
+  // A real ObjectId: since Phase 12 a malformed id asks for nothing at all.
+  repo.findById('64b7f0c2a1b2c3d4e5f60718');
   repo.countDocuments({});
 
   assert.equal(Model.calls.length, 4);
   for (const call of Model.calls) {
     assert.equal(call.filter.tenantId, 't1', `${call.name} must be tenant-scoped`);
   }
-  assert.deepEqual(Model.calls[2].filter, { _id: 'o1', tenantId: 't1' });
+  assert.deepEqual(Model.calls[2].filter, { _id: '64b7f0c2a1b2c3d4e5f60718', tenantId: 't1' });
 });
 
 test('an insert carries the tenant too, so a record cannot be created unscoped', () => {
@@ -75,7 +76,7 @@ test('INV-D: a missing record throws the argument-free 404', async () => {
   const repo = scoped(Model, ctx);
 
   await assert.rejects(
-    () => repo.findByIdOrNotFound('o1'),
+    () => repo.findByIdOrNotFound('64b7f0c2a1b2c3d4e5f60718'),
     (error) => {
       // Byte-identical to "no such record" -- no message, no detail, nothing
       // that could distinguish a foreign record from an absent one.
