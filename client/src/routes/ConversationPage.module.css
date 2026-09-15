@@ -125,6 +125,39 @@
   justify-content: flex-end;
 }
 
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* An offer of a person after an answer the assistant could not ground. An
+   offer, not an escalation: nothing happens until it is pressed (ADR 0010). */
+.offer {
+  margin-top: var(--space-2);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.offerText {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* Shown only once the server has said the ticket exists. */
+.notice {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-policy-border);
+  border-left: 3px solid var(--color-policy);
+  border-radius: var(--radius);
+  background: var(--color-policy-subtle);
+}
+
 @media (max-width: 480px) {
   .customer,
   .assistant {

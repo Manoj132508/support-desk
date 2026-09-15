@@ -10,8 +10,9 @@ import { ApiError } from '../lib/api.js';
  * replaced -- the JSON client (injected) and `fetch` for the stream (stubbed).
  *
  * What these tests exist to hold: the words "was cancelled" appear only after
- * the confirm route said so, and every other ending -- a refusal, a fault, a
- * dismissal, Stop -- says something true instead.
+ * the confirm route said so, the words "a colleague will pick this up" only
+ * after the server said a ticket exists, and every other ending says something
+ * true instead.
  */
 
 const encoder = new TextEncoder();
@@ -86,6 +87,8 @@ const executed = (cancellationRef = 'CXL-1043') => ({
   outcome: { proposalId: 'p1', outcome: 'executed', at: '2026-09-15T10:00:00.000Z', cancellationRef },
   duplicate: false,
 });
+
+const escalateCalls = (client) => client.post.mock.calls.filter(([path]) => path.endsWith('/escalate'));
 
 afterEach(() => {
   cleanup();
@@ -216,6 +219,7 @@ describe('ConversationPage — ONLY A SERVER DECISION MARKS AN ORDER CANCELLED',
     expect(client.post).toHaveBeenCalledWith('/api/proposals/p1/reject');
     expect(client.post).not.toHaveBeenCalledWith('/api/proposals/p1/confirm');
     expect(document.getElementById('proposal-p1')).toHaveFocus();
+    expect(escalateCalls(client)).toHaveLength(0);
   });
 
   it('ADR 0009: dismissing decides nothing, and Review reopens the same proposal', async () => {
@@ -258,7 +262,7 @@ describe('ConversationPage — ONLY A SERVER DECISION MARKS AN ORDER CANCELLED',
       '/api/proposals/p1/confirm': new ApiError({
         kind: 'stale',
         message: 'Refused at execution',
-        customerMessage: 'This order has now been dispatched, so it can no longer be cancelled here.',
+        customerMessage: 'Cancellations are paused today.',
         status: 409,
       }),
     });
@@ -268,7 +272,9 @@ describe('ConversationPage — ONLY A SERVER DECISION MARKS AN ORDER CANCELLED',
     await ask(user);
     await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel order 1043' }));
 
-    expect(await screen.findByRole('note')).toHaveTextContent('This order has now been dispatched');
+    const note = await screen.findByRole('note');
+    expect(note).toHaveTextContent('Cancellations are paused today.');
+    expect(note).not.toHaveTextContent(/colleague/i);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByText(/order 1043 was cancelled/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
@@ -303,27 +309,169 @@ describe('ConversationPage — ONLY A SERVER DECISION MARKS AN ORDER CANCELLED',
   });
 });
 
-describe('ConversationPage — policy notices', () => {
-  it('a refusal at proposal is a calm note in the rule’s words, with no dialog and no dead button', async () => {
-    stubStream([
-      frame('token', 'Let me check that order.'),
-      frame('policy', {
-        kind: 'refused',
-        outcome: 'refused_at_proposal',
-        proposalId: 'p9',
-        customerMessage: 'This order has already been delivered, so it can’t be cancelled.',
-      }),
-      frame('done', { action: 'propose' }),
-    ]);
+describe('ConversationPage — ONLY THE SERVER CAN SAY A COLLEAGUE IS COMING (ADR 0010)', () => {
+  const REFUSED = frame('policy', {
+    kind: 'refused',
+    outcome: 'refused_at_proposal',
+    proposalId: 'p9',
+    customerMessage: 'This order has already been delivered, so it can’t be cancelled. You can return it instead.',
+    escalated: false,
+  });
+  const ESCALATED = frame('policy', {
+    kind: 'refused',
+    outcome: 'escalated_at_proposal',
+    proposalId: 'p8',
+    customerMessage: 'This order has already been dispatched, so I can’t cancel it myself. I’ll bring in a colleague.',
+    escalated: true,
+  });
+  const actionTurn = (policy) => [frame('token', 'Let me check that order.'), policy, frame('done', { action: 'propose' })];
+  const ANSWER = { escalation: { ticketId: 't1', status: 'open', created: true } };
+  const NOTICE = /They can see this conversation/;
+
+  it('a refusal the rule explained is a calm note that offers a person instead of a dead end', async () => {
+    stubStream(actionTurn(REFUSED));
+    const client = makeClient();
     const user = userEvent.setup();
-    render(<ConversationPage client={makeClient()} />);
+    render(<ConversationPage client={client} />);
 
     await ask(user);
 
-    expect(await screen.findByRole('note')).toHaveTextContent('already been delivered');
+    const note = await screen.findByRole('note');
+    expect(note).toHaveTextContent('already been delivered');
+    expect(note).not.toHaveTextContent(/colleague/i);
+    expect(within(note).getByRole('button', { name: 'Talk to a person' })).toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    // Escalation is Phase 11. Until then there is no button that does nothing.
-    expect(screen.queryByRole('button', { name: /talk to a person/i })).not.toBeInTheDocument();
+    expect(escalateCalls(client)).toHaveLength(0);
+  });
+
+  it('pressing it sends the refused proposal, and only the server’s answer turns it into "a colleague is coming"', async () => {
+    stubStream(actionTurn(REFUSED));
+    let resolveEscalation;
+    const client = makeClient({
+      '/api/conversations/c1/escalate': () =>
+        new Promise((resolve) => {
+          resolveEscalation = resolve;
+        }),
+    });
+    const user = userEvent.setup();
+    render(<ConversationPage client={client} />);
+
+    await ask(user);
+    const note = await screen.findByRole('note');
+    await user.click(within(note).getByRole('button', { name: 'Talk to a person' }));
+
+    expect(client.post).toHaveBeenCalledWith('/api/conversations/c1/escalate', { proposalId: 'p9' });
+    expect(within(note).getByRole('button', { name: 'Talk to a person' })).toBeDisabled();
+    expect(note).not.toHaveTextContent(/colleague/i);
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+
+    resolveEscalation(ANSWER);
+
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent('A colleague will pick this up');
+    expect(screen.queryByRole('button', { name: 'Talk to a person' })).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('A colleague will pick this up');
+  });
+
+  it('a notice the server escalated says so at once, and leaves nothing to press', async () => {
+    stubStream(actionTurn(ESCALATED));
+    const client = makeClient();
+    const user = userEvent.setup();
+    render(<ConversationPage client={client} />);
+
+    await ask(user);
+
+    expect(await screen.findByRole('note')).toHaveTextContent('A colleague will pick this up');
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Talk to a person' })).not.toBeInTheDocument();
+    expect(escalateCalls(client)).toHaveLength(0);
+  });
+
+  it('a request that fails claims nothing, and can be made again', async () => {
+    stubStream([frame('token', 'Your order is on its way.'), frame('done', {})]);
+    let attempts = 0;
+    const client = makeClient({
+      '/api/conversations/c1/escalate': () => {
+        attempts += 1;
+        return attempts === 1
+          ? Promise.reject(new ApiError({ kind: 'fault', message: 'down', status: 500 }))
+          : Promise.resolve(ANSWER);
+      },
+    });
+    const user = userEvent.setup();
+    render(<ConversationPage client={client} />);
+
+    await ask(user, 'Where is my order?');
+    await screen.findByText('Your order is on its way.');
+
+    // Any time: the heading's button, with no refusal behind it.
+    await user.click(screen.getByRole('button', { name: 'Talk to a person' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent("couldn't reach a colleague");
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+
+    await user.click(within(alert).getByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    expect(client.post).toHaveBeenLastCalledWith('/api/conversations/c1/escalate', {});
+    expect(attempts).toBe(2);
+  });
+
+  it('an answer the assistant could not ground offers a person, and the offer alone escalates nothing', async () => {
+    stubStream([
+      frame('token', "I couldn't find an answer to that in our help centre."),
+      frame('done', { grounded: false, shouldEscalate: true }),
+    ]);
+    const client = makeClient();
+    const user = userEvent.setup();
+    render(<ConversationPage client={client} />);
+
+    await ask(user, 'Do you sell gift cards?');
+
+    expect(await screen.findByText('A person may be able to help with this.')).toBeInTheDocument();
+    // The offer beside the answer, and the heading's.
+    expect(screen.getAllByRole('button', { name: 'Talk to a person' })).toHaveLength(2);
+    expect(escalateCalls(client)).toHaveLength(0);
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+  });
+
+  it('at execution: an order that shipped before confirming is refused, a colleague is already coming, and nothing is left to press', async () => {
+    stubStream(PROPOSAL_TURN);
+    const client = makeClient({
+      '/api/proposals/p1/confirm': new ApiError({
+        kind: 'stale',
+        message: 'Refused at execution',
+        customerMessage: 'This order has already been dispatched, so I can’t cancel it myself. I’ll bring in a colleague.',
+        status: 409,
+        escalated: true,
+      }),
+    });
+    const user = userEvent.setup();
+    render(<ConversationPage client={client} />);
+
+    await ask(user);
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel order 1043' }));
+
+    expect(await screen.findByRole('note')).toHaveTextContent('A colleague will pick this up');
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Talk to a person' })).not.toBeInTheDocument();
+  });
+
+  it('a failure the server recorded as terminal says a colleague has it, and offers no retry', async () => {
+    stubStream(PROPOSAL_TURN);
+    const client = makeClient({
+      '/api/proposals/p1/confirm': new ApiError({ kind: 'fault', message: 'Execution failed', status: 500, escalated: true }),
+    });
+    const user = userEvent.setup();
+    render(<ConversationPage client={client} />);
+
+    await ask(user);
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel order 1043' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/passed this to a colleague/);
+    expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/order 1043 was cancelled/i)).not.toBeInTheDocument();
   });
 });
