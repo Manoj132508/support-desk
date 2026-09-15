@@ -48,6 +48,17 @@ import re
 
 from app.pipeline.retrieval import RetrievedChunk
 
+"""The threshold the fake's scores are read against. NOT the production value.
+
+Production's threshold is calibrated to the real model's scores by the Phase 13
+escalation eval. This fake's scores sit on a different scale, so production's
+number means nothing to it. When Phase 13 moved production from 0.35 to 0.51,
+five tests went red. Their questions score between those two values on this
+fake, and no behaviour under test had changed. `conftest.py` pins every test to
+this value instead.
+"""
+FAKE_EMBEDDER_THRESHOLD = 0.35
+
 STOP_WORDS = frozenset(
     """
     a an and are as at be by can do does for from has have how i if in is it
