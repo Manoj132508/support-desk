@@ -203,6 +203,10 @@ export function conversationReducer(state, action) {
       return updatePendingProposal(state, action.proposalId, (turn) => ({
         ...turn,
         proposal: { ...turn.proposal, status: PROPOSAL_STATUS.DECIDED },
+        // A fault notice left by a failed earlier attempt describes nothing
+        // once the retry has succeeded. A policy notice cannot be on this turn:
+        // a turn carries a proposal or a policy notice, never both.
+        policy: turn.policy?.kind === 'fault' ? null : turn.policy,
         outcome: {
           outcome: action.outcome,
           cancellationRef: typeof action.cancellationRef === 'string' ? action.cancellationRef : null,

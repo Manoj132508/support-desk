@@ -210,6 +210,13 @@ describe('when the confirm or reject route answers with an error', () => {
     expect(reply(state).policy.kind).toBe('fault');
   });
 
+  it('a retry that succeeds after a fault clears the fault notice', () => {
+    const faulted = conversationReducer(pending(), { type: 'proposalRefused', proposalId: 'p1', kind: 'fault' });
+    const state = conversationReducer(faulted, { type: 'proposalDecided', proposalId: 'p1', outcome: 'executed' });
+    expect(reply(state).policy).toBeNull();
+    expect(reply(state).outcome.outcome).toBe('executed');
+  });
+
   it('an unrecognised error kind is treated as a fault, never as a decision', () => {
     const state = conversationReducer(pending(), { type: 'proposalRefused', proposalId: 'p1', kind: 'approved' });
     expect(reply(state).proposal.status).toBe(PROPOSAL_STATUS.PENDING);
