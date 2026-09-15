@@ -33,9 +33,11 @@ server/src/services/sse.js      the relay: an allowlist, and the one intercepted
 server/src/routes/              proposals.js · policies.js · audit.js · conversations.js
 server/scripts/                 seedData.js (pure) · seed.js · sweep.js
 ai-service/app/pipeline/intent.py   recognising a request to act, conservatively
+client/src/lib/conversationReducer.js   stream frames in, transcript out — a pure function
+client/src/routes/ConversationPage.jsx  the customer conversation screen
 ```
 
-Tests: **355 server**, **78 AI service**, 39 client.
+Tests: **355 server**, **78 AI service**, **74 client**.
 
 ---
 
@@ -422,6 +424,7 @@ A dismissed dialog leaves a proposal pending forever. The sweep gives it the ter
 | The Phase 6 contract had no route to create a rule; `POST /api/policies` added | §7, and the route list in `routes/index.js` |
 | The Phase 6 config said `npm run dev` loaded `.env`; it did not | §11.1, and `server/package.json` |
 | The Python suite's earlier green run was luck | [Phase 9 amendment](phase-09-kb-ingest-and-ai-service.md) |
+| Phase 5's `Modal` re-ran its focus effect whenever its parent re-rendered | §14, and `Modal.jsx` |
 
 ---
 
@@ -440,7 +443,10 @@ All of the following needs a MongoDB **replica set**, and none has run against o
   JavaScript counterparts and tested for structure, but only a real MongoDB can show they agree;
 - the seed and sweep scripts themselves — their pure cores are tested, the wrappers are not;
 - the route layer end to end: a customer's message reaching the AI service, the proposal being
-  intercepted, confirmed and executed, and the result shown.
+  intercepted, confirmed and executed, and the result shown;
+- the conversation screen against the real API. Its tests run the real reducer, stream parser and
+  dialog with only the network replaced, and the browser check (§14) ran the real page with `fetch`
+  stubbed inside it. No real Express stream has ever reached it.
 
 The repo tests use fake models. They assert the **shape** of every query and pipeline, and how
 database outcomes are translated. They do not, and are not described as, proving what MongoDB
@@ -448,14 +454,82 @@ itself does.
 
 ---
 
-## 14. Still to build in this phase
+## 14. The customer conversation screen
 
-- **The customer conversation screen.** The confirmation dialog and policy block from Phases 4–5,
-  wired to the `proposal`, `policy`, `token`, `evidence` and `done` frames, with the transcript
-  built by a pure reducer so the rule that matters is testable: **only a server decision can mark an
-  order cancelled** — no stream frame can.
+```
+client/src/lib/conversationReducer.js   stream frames in, transcript out
+client/src/routes/ConversationPage.jsx  ConversationView (props only) and the wiring
+client/src/App.jsx                      "/" is the conversation for a customer, the console for staff
+```
 
-One limit to state in advance: escalation to a person is Phase 11 (FR-8). Until then a policy notice
-cannot offer "talk to a person", and ADR 0007 says a refusal should always offer a next step. The
-screen will show the rule's own message and **no escalation button**, rather than a button that
-does nothing — and this gap closes in Phase 11.
+**The rule, as a reducer.** Only a server decision can mark an order cancelled. No stream frame — a
+token, `done`, not even `proposal` — can set an outcome. Only `proposalDecided` can, dispatched after
+the confirm or reject route answered 200 with `executed` or `rejected_by_customer`. One page test
+streams a token saying "I've cancelled order 1043" and a `done` frame carrying `outcome: 'executed'`;
+the screen still says nothing of the kind.
+
+**What each ending shows.**
+
+| The server said | The customer sees | The proposal |
+|---|---|---|
+| 200 `executed` | "Order 1043 was cancelled. Reference …" | settled |
+| 200 `rejected_by_customer` | "You kept order 1043. Nothing was changed." | settled |
+| 409 `stale` — refused at execution, or already decided | the rule's own words, in the policy language | settled |
+| 500 `fault` | a fault notice, and Review stays | pending — the customer can retry |
+| nothing: the dialog was dismissed | nothing new, and Review stays | pending |
+
+**Decisions.**
+
+- The dialog opens by itself for a turn's first proposal; after that, a Review button on the proposal
+  card reopens it. The card shows the server-rendered text and has no confirm control of its own:
+  the consequential click exists only in the dialog (ADR 0009).
+- Staff are sent from "/" to the console. That is not a role gate on the route, because
+  `ProtectedRoute` sends a user without the role back to "/", which would loop.
+- The draft clears only once the message has left, so a conversation that fails to start does not
+  also lose what was typed.
+- The status region announces state — responding, complete, stopped, "Order 1043 was cancelled" —
+  never the tokens.
+- No "talk to a person" button, because nothing behind it exists yet. See the last part of this
+  section.
+
+**Found while building it.** Each has a test that failed before its fix.
+
+1. A successful retry left the earlier fault notice on screen, beside "was cancelled".
+   `proposalDecided` now drops a fault notice.
+2. After a decision, keyboard focus fell to the top of the document. The dialog returns focus to
+   whatever opened it, and the Review button that opened it no longer exists once the proposal is
+   decided. Focus now moves to the settled proposal card. Seen first in the browser, where
+   `document.activeElement` was `<body>`.
+3. `Modal` listed `onClose` among its effect's dependencies, and the page passes a fresh function on
+   every render. So every stream frame arriving under an open dialog tore the effect down and ran it
+   again, putting focus back on the heading wherever the customer had moved it. `onClose` is now read
+   through a ref. The bug predates this phase; it surfaced here because this is the first dialog that
+   opens while a stream is still delivering frames.
+
+**Verification.** The page tests run the real reducer, stream parser and dialog; only the JSON
+client and `fetch` are replaced. In the browser, the real page ran on the Vite dev server with
+`fetch` stubbed inside the page, since no API can run without a replica set. A customer signed in,
+streamed a reply and received a proposal. Focus landed on the dialog's heading. Escape closed it
+without a request, Review reopened it, and Tab reached "Cancel order 1043". While the confirm request
+was in flight both buttons were disabled, the confirm button was `aria-busy`, and no text anywhere
+said "cancelled". After the answer the dialog closed, Review was gone, and the status region read
+"Order 1043 was cancelled". At 375px the page does not scroll sideways.
+
+One thing the browser check could **not** show: that Enter pressed on the dialog's heading authorises
+nothing. The automation tool's key presses produce `keydown` and `keyup` but no `keypress` and no
+activation, so Enter did nothing on the focused confirm button either. The browser run is no evidence
+for ADR 0009's property 2; that property rests on its unit test, whose `user-event` does activate
+buttons.
+
+**A promise the screen cannot keep yet.** Escalation is Phase 11 (FR-8), and nothing creates one
+today: the action service records `escalated_at_proposal` and stops there. But the words a customer
+reads already promise a person. The baseline rule for dispatched orders says "I'll bring in a
+colleague who can check whether the carrier can stop it". The demo tenant's high-value rule says
+larger orders "are reviewed by a colleague". `PolicyBlock` heads every policy notice "This needs a
+person", and when a rule has no message — every malformed attempt — it falls back to "Let me bring in
+a colleague who can help". Until Phase 11, an escalated customer is told a colleague is coming, and
+no colleague is told anything.
+
+Leaving out a dead button is the small part of this. Phase 11 has to close the larger gap by creating
+the escalation where the outcome is recorded — not by softening the copy, because a person is the
+promise the product should keep.
