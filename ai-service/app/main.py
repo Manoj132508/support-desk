@@ -18,7 +18,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.config import settings
+from app.config import settings, startup_problems
 from app.pipeline.generator import OllamaGenerator
 from app.pipeline.loader import load_kb
 from app.service import plan_turn, stream_answer
@@ -34,7 +34,15 @@ async def lifespan(app: FastAPI):
     every time. It is also where the two-gigabyte import actually happens --
     deferred to here so that importing this module (as the tests do) costs
     nothing.
+
+    First, though, it refuses to start an unsafe production configuration
+    (Phase 12): a service meant to answer only the API should not come up
+    answering anyone.
     """
+    problems = startup_problems(settings)
+    if problems:
+        raise RuntimeError("Refusing to start: " + "; ".join(problems))
+
     if state["embedder"] is None:
         from app.pipeline.embedder import SentenceTransformerEmbedder  # noqa: PLC0415
         from app.pipeline.vector_store import ChromaVectorStore  # noqa: PLC0415
@@ -57,12 +65,19 @@ def require_service_token(x_service_token: str = Header(default="")) -> None:
     deployment property, and deployment properties get changed by someone in a
     hurry -- so the service also declines to answer strangers.
 
+    It FAILS CLOSED in production (Phase 12). An unset token used to mean
+    "accept everyone" in every environment. Startup now refuses that
+    configuration in production; this is the second lock, for a setting changed
+    underneath a running process.
+
     `compare_digest` rather than `==`: a naive comparison returns early on the
     first differing byte, which leaks the token a character at a time to anyone
     patient enough to measure.
     """
     if not settings.service_token:
-        return  # unset in development; the dev ports are localhost-only
+        if settings.is_production:
+            raise HTTPException(status_code=401, detail="service token required")
+        return  # development only: the dev ports are localhost-only
     if not secrets.compare_digest(x_service_token, settings.service_token):
         raise HTTPException(status_code=401, detail="service token required")
 
@@ -155,20 +170,22 @@ async def turn(request: TurnRequest) -> StreamingResponse:
     )
 
 
-class IngestRequest(BaseModel):
-    path: str | None = None
-
-
 @app.post("/ingest", dependencies=[Depends(require_service_token)])
-def ingest(request: IngestRequest) -> dict:
+def ingest() -> dict:
     """Re-indexes the help centre. Idempotent by construction.
 
     Chunk ids are deterministic (`{document_id}:{index}`), so re-ingesting
     unchanged content upserts the same ids over themselves rather than
     accumulating duplicates. That is the property the chunker's determinism
     exists to provide, and it is why re-indexing is safe to run on deploy.
+
+    It reads the CONFIGURED help centre and nothing else (Phase 12). It used to
+    accept a `path` in the request, so any caller could have the service read a
+    directory of its choosing into the index -- from which retrieval would then
+    quote it to customers. The directory is a deployment setting, not a request
+    parameter.
     """
-    directory = Path(request.path or settings.kb_path)
+    directory = Path(settings.kb_path)
     chunks = load_kb(
         directory, chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap
     )
