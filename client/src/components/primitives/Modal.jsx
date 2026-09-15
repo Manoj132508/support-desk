@@ -48,6 +48,23 @@ export default function Modal({
   const titleRef = useRef(null);
   const previouslyFocused = useRef(null);
 
+  /**
+   * `onClose` is read through a ref, NOT listed as a dependency of the effect
+   * below.
+   *
+   * A parent re-renders a dialog for reasons that have nothing to do with it --
+   * a stream frame arriving, a request starting -- and usually passes a fresh
+   * function each time. With `onClose` in the dependency list, every such
+   * re-render tore the effect down and ran it again: focus was restored outside
+   * the dialog and then put back on the heading, wherever the user had moved
+   * it. On the confirmation dialog that meant a customer who had tabbed to
+   * "Keep my order" was thrown back to the top of the dialog by a token.
+   */
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!open) return undefined;
 
@@ -66,7 +83,7 @@ export default function Modal({
 
     function onKeyDown(event) {
       if (event.key === 'Escape') {
-        onClose();
+        onCloseRef.current?.();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -98,7 +115,7 @@ export default function Modal({
       document.body.style.overflow = previousOverflow;
       previouslyFocused.current?.focus?.();
     };
-  }, [open, onClose, initialFocus]);
+  }, [open, initialFocus]);
 
   if (!open) return null;
 

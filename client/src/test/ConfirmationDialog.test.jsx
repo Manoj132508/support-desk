@@ -57,6 +57,22 @@ describe('ConfirmationDialog — ADR 0009', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it('property 2: a re-render with new handlers does not pull focus back to the heading', () => {
+    // The page re-renders the dialog for reasons unrelated to it -- a stream
+    // frame arriving, a request starting -- usually with fresh handler
+    // functions. Focus must stay where the customer put it.
+    const handlers = { onConfirm: vi.fn(), onReject: vi.fn(), onDismiss: vi.fn() };
+    const { rerender } = render(<ConfirmationDialog open proposal={proposal} {...handlers} />);
+    const keep = screen.getByRole('button', { name: 'Keep my order' });
+    keep.focus();
+
+    rerender(
+      <ConfirmationDialog open proposal={proposal} onConfirm={() => {}} onReject={() => {}} onDismiss={() => {}} />,
+    );
+
+    expect(keep).toHaveFocus();
+  });
+
   it('property 3: the action text rendered is the stored proposal text', () => {
     setup();
     expect(screen.getByText(proposal.confirmText)).toBeInTheDocument();
