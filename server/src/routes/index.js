@@ -2,21 +2,21 @@ import { Router } from 'express';
 import { healthRouter } from './health.js';
 import { authRouter } from './auth.js';
 import { conversationsRouter } from './conversations.js';
-import { AppError } from '../errors/AppError.js';
+import { makeConversationEscalationRouter } from './conversationEscalation.js';
 import { makeProposalsRouter } from './proposals.js';
+import { makeTicketsRouter } from './tickets.js';
 import { makePoliciesRouter } from './policies.js';
 import { makeAuditRouter } from './audit.js';
 import { requireCsrfToken } from '../middleware/csrf.js';
 import { authenticate } from '../middleware/authenticate.js';
-import { requireRole, STAFF } from '../middleware/requireRole.js';
 
 /**
  * Every route in the Phase 6 contract, mounted.
  *
- * Routes a later phase builds return a correctly shaped 501 rather than being
- * left out: a 404 on an unbuilt route is indistinguishable from a typo in the
- * path, while a 501 naming its phase is unambiguous, and it makes the contract
- * testable now.
+ * Until the phase that built it, each route returned a correctly shaped 501
+ * naming that phase rather than being left out: a 404 on an unbuilt route is
+ * indistinguishable from a typo in the path, while a 501 is unambiguous, and it
+ * made the contract testable from Phase 6 on. Phase 11 built the last of them.
  *
  * THE ORDER OF THE THREE `use` CALLS BELOW IS THE ACCESS-CONTROL DESIGN.
  * Everything declared after them inherits CSRF protection and authentication
@@ -24,10 +24,6 @@ import { requireRole, STAFF } from '../middleware/requireRole.js';
  * not an available mistake -- a developer would have to deliberately mount
  * above the line to create an unprotected route.
  */
-
-function pending(phase) {
-  return (req, res, next) => next(AppError.notImplemented(phase));
-}
 
 export const apiRouter = Router();
 
@@ -60,7 +56,11 @@ apiRouter.use('/auth', authRouter);
 apiRouter.use(authenticate);
 apiRouter.use(requireCsrfToken);
 
-/* ── Conversations — FR-1, FR-2, FR-3 (Phase 9) ─────────────────────────── */
+/* ── Conversations — FR-1, FR-2, FR-3 (Phases 9–10), FR-8.2 (Phase 11) ────
+ * A customer asking for a person is its own small router, mounted first so it
+ * can be tested with a fake service. Every other conversation route falls
+ * through to the next router. */
+apiRouter.use('/conversations', makeConversationEscalationRouter());
 apiRouter.use('/conversations', conversationsRouter);
 
 /* ── Proposals — FR-6, FR-7 (Phase 10) ──────────────────────────────────
@@ -75,11 +75,11 @@ apiRouter.use('/conversations', conversationsRouter);
  * client-supplied key would be attacker-controlled. */
 apiRouter.use('/proposals', makeProposalsRouter());
 
-/* ── Tickets — FR-8, FR-9, FR-10 (Phase 11) ─────────────────────────────── */
-apiRouter.get('/tickets', requireRole(STAFF), pending('Phase 11'));
-apiRouter.get('/tickets/:id', requireRole(STAFF), pending('Phase 11'));
-apiRouter.post('/tickets/:id/status', requireRole(STAFF), pending('Phase 11'));
-apiRouter.post('/tickets/:id/escalate', pending('Phase 11'));
+/* ── Tickets — FR-8, FR-9, FR-10 (Phase 11) ───────────────────────────────
+ * Staff only, enforced inside the router. There is no ticket escalate route:
+ * a customer who has not yet escalated has no ticket, and may not read tickets
+ * anyway, so asking for a person is keyed by the conversation (above). */
+apiRouter.use('/tickets', makeTicketsRouter());
 
 /* ── Policy and audit — FR-11, FR-12 (Phase 10) ─────────────────────────
  * Leads may read both; only admins change rules. The roles are enforced inside
@@ -99,12 +99,12 @@ export const CONTRACT_ROUTES = [
   ['post', '/api/conversations'],
   ['get', '/api/conversations/abc'],
   ['post', '/api/conversations/abc/messages'],
+  ['post', '/api/conversations/abc/escalate'],
   ['post', '/api/proposals/abc/confirm'],
   ['post', '/api/proposals/abc/reject'],
   ['get', '/api/tickets'],
   ['get', '/api/tickets/abc'],
   ['post', '/api/tickets/abc/status'],
-  ['post', '/api/tickets/abc/escalate'],
   ['get', '/api/policies'],
   ['post', '/api/policies'],
   ['put', '/api/policies/abc'],
