@@ -7,6 +7,7 @@ import ScaffoldPage from './routes/ScaffoldPage.jsx';
 import ConversationPage from './routes/ConversationPage.jsx';
 import QueuePage from './routes/console/QueuePage.jsx';
 import TicketPage from './routes/console/TicketPage.jsx';
+import AccountPage from './routes/AccountPage.jsx';
 
 /**
  * Route map, mirroring the seven screens in Phase 4 section 3.
@@ -46,6 +47,7 @@ function AppRoutes() {
         </Link>
         {user && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            {user.role === 'customer' && <Link to="/account">Account</Link>}
             <span style={{ color: 'var(--color-muted)' }}>
               {user.name ?? user.email} · {user.role}
             </span>
@@ -65,6 +67,15 @@ function AppRoutes() {
             element={
               <ProtectedRoute>
                 <HomeRoute />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/account"
+            element={
+              <ProtectedRoute roles={['customer']}>
+                <AccountPage />
               </ProtectedRoute>
             }
           />

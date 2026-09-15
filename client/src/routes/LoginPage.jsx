@@ -47,6 +47,7 @@ export default function LoginPage() {
   return (
     <div className="scaffold-page" style={{ maxWidth: 380 }}>
       <h1>Sign in</h1>
+      {location.state?.notice === 'account-deleted' && <p role="status">Your account has been deleted.</p>}
       <form onSubmit={onSubmit} noValidate>
         <Input
           label="Organisation"

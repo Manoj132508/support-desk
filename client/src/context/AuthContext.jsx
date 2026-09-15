@@ -63,16 +63,23 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  /**
+   * Forget the signed-in user without asking the server -- for when the server
+   * has already ended the session itself, as deleting an account does.
+   */
+  const forgetUser = useCallback(() => setUser(null), []);
+
   const value = useMemo(
     () => ({
       user,
       bootstrapping,
       login,
       logout,
+      forgetUser,
       isStaff: Boolean(user) && user.role !== 'customer',
       hasRole: (...roles) => Boolean(user) && roles.includes(user.role),
     }),
-    [user, bootstrapping, login, logout],
+    [user, bootstrapping, login, logout, forgetUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
