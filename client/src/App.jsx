@@ -5,6 +5,8 @@ import Button from './components/primitives/Button.jsx';
 import LoginPage from './routes/LoginPage.jsx';
 import ScaffoldPage from './routes/ScaffoldPage.jsx';
 import ConversationPage from './routes/ConversationPage.jsx';
+import QueuePage from './routes/console/QueuePage.jsx';
+import TicketPage from './routes/console/TicketPage.jsx';
 
 /**
  * Route map, mirroring the seven screens in Phase 4 section 3.
@@ -13,6 +15,8 @@ import ConversationPage from './routes/ConversationPage.jsx';
  * policy and audit narrow further to lead/admin -- the same role split as the
  * actor table in Phase 1 section 2.
  */
+
+const STAFF_ROLES = ['agent', 'lead', 'admin'];
 
 /**
  * "/" depends on who is asking. Customers talk to the assistant; staff work the
@@ -68,17 +72,28 @@ function AppRoutes() {
           <Route
             path="/console"
             element={
-              <ProtectedRoute roles={['agent', 'lead', 'admin']}>
-                <ScaffoldPage title="Agent console" phase="Phase 11" />
+              <ProtectedRoute roles={STAFF_ROLES}>
+                <QueuePage />
               </ProtectedRoute>
             }
           />
 
           <Route
+            path="/console/tickets/:id"
+            element={
+              <ProtectedRoute roles={STAFF_ROLES}>
+                <TicketPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Their APIs shipped in Phase 10; the traceability table gives these
+              screens no build phase yet (Phase 11 doc §1). */}
+          <Route
             path="/console/policies"
             element={
               <ProtectedRoute roles={['lead', 'admin']}>
-                <ScaffoldPage title="Policy rules" phase="Phase 11" />
+                <ScaffoldPage title="Policy rules" phase="a later phase, not yet scheduled" />
               </ProtectedRoute>
             }
           />
@@ -87,7 +102,7 @@ function AppRoutes() {
             path="/console/audit"
             element={
               <ProtectedRoute roles={['lead', 'admin']}>
-                <ScaffoldPage title="Audit" phase="Phase 11" />
+                <ScaffoldPage title="Audit" phase="a later phase, not yet scheduled" />
               </ProtectedRoute>
             }
           />

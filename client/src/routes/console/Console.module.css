@@ -1,0 +1,251 @@
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  margin: 0;
+}
+
+.back {
+  margin: 0;
+}
+
+/* ── Queue ─────────────────────────────────────────────────────────────── */
+
+.filters {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.filter {
+  display: inline-block;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.filter:hover {
+  background: var(--color-surface-alt);
+}
+
+/* The current filter differs in weight and border as well as colour, so the
+   distinction does not rest on hue alone (NFR-8). */
+.filterActive {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  font-weight: 600;
+}
+
+.count {
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.table th {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+/* ── One ticket ────────────────────────────────────────────────────────── */
+
+.ticketHeader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.meta {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+/* Phase 4 §6: desktop-first panes, stacking below 1024px. */
+.panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+@media (min-width: 1024px) {
+  .panes {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    align-items: start;
+  }
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.pane {
+  min-width: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+}
+
+.pane h2 {
+  font-size: var(--font-size-lg);
+  margin: 0 0 var(--space-2);
+}
+
+.transcript,
+.attempts,
+.events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.message {
+  display: grid;
+  gap: var(--space-1);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.message:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.role {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.when,
+.marker,
+.reason {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.marker {
+  font-style: italic;
+}
+
+.moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.attempt {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* Phase 4 §6: blocked actions are a primary panel, not a log. The border
+   differs as well as the fill, so it is not colour alone. */
+.blocked {
+  border-left: 3px solid var(--color-policy);
+  background: var(--color-policy-subtle);
+}
+
+.attemptHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.attemptTitle {
+  font-weight: 600;
+}
+
+.codes {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-sm);
+}
+
+.decision {
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--color-border);
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+
+.decision > div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.decision dt {
+  min-width: 104px;
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+.decision dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.decision code,
+.codes code {
+  font-family: var(--font-mono);
+}
+
+.events li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
