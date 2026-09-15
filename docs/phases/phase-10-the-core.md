@@ -1,11 +1,12 @@
 # Phase 10 — The core
 
 **Project 3 · AI Support Desk**
-Status: **in progress — one item left.** Built, tested and committed: the policy engine, the
-proposal boundary, propose → confirm → execute with its MongoDB repository, the confirm and reject
-routes, policy administration, the audit query, the proposal stream frame and the recogniser
-behind it, the demo seed and the expiry sweep. Still to build: the customer conversation screen
-(§14). This document records findings as they are made rather than reconstructing them at the end.
+Status: **complete.** Built, tested and committed: the policy engine, the proposal boundary,
+propose → confirm → execute with its MongoDB repository, the confirm and reject routes, policy
+administration, the audit query, the proposal stream frame and the recogniser behind it, the demo
+seed, the expiry sweep and the customer conversation screen (§14). What none of it has yet run
+against — a replica set, a real stream end to end — is listed in §13. This document recorded
+findings as they were made rather than reconstructing them at the end.
 
 This is the phase the project exists for. ADR 0002 (the model proposes, never authorises) and
 ADR 0003 (re-check at execution, execute at most once) stop being documents here.
@@ -513,7 +514,10 @@ streamed a reply and received a proposal. Focus landed on the dialog's heading. 
 without a request, Review reopened it, and Tab reached "Cancel order 1043". While the confirm request
 was in flight both buttons were disabled, the confirm button was `aria-busy`, and no text anywhere
 said "cancelled". After the answer the dialog closed, Review was gone, and the status region read
-"Order 1043 was cancelled". At 375px the page does not scroll sideways.
+"Order 1043 was cancelled". At 375px the page does not scroll sideways. After fixes 2 and 3 the
+browser run was repeated. A `done` frame arrived 2.5 seconds after the proposal while focus was on
+"Keep my order", and focus stayed there. After confirming, focus was on the settled proposal card,
+with no focus ring after a mouse click.
 
 One thing the browser check could **not** show: that Enter pressed on the dialog's heading authorises
 nothing. The automation tool's key presses produce `keydown` and `keyup` but no `keypress` and no
