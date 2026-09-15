@@ -4,11 +4,13 @@ import {
   initialConversation,
   TURN_STATE,
   PROPOSAL_STATUS,
+  ESCALATION_STATUS,
 } from '../lib/conversationReducer.js';
 
 /**
- * The transcript reducer. The rule these tests exist for: ONLY A SERVER
- * DECISION CAN MARK AN ORDER CANCELLED. No stream frame can set an outcome.
+ * The transcript reducer. The rules these tests exist for: ONLY A SERVER
+ * DECISION CAN MARK AN ORDER CANCELLED, and ONLY THE SERVER CAN SAY A
+ * COLLEAGUE IS COMING. No stream frame can do either.
  */
 
 const reduce = (actions, state = initialConversation) => actions.reduce(conversationReducer, state);
@@ -121,14 +123,24 @@ describe('policy notices', () => {
       send(),
       {
         type: 'policy',
-        data: { kind: 'refused', outcome: 'refused_at_proposal', customerMessage: 'This order has already shipped.', detail: { ruleKey: 'X' } },
+        data: {
+          kind: 'refused',
+          outcome: 'refused_at_proposal',
+          proposalId: 'p9',
+          customerMessage: 'This order has already shipped.',
+          escalated: false,
+          detail: { ruleKey: 'X' },
+        },
       },
     ]);
     expect(reply(state).policy).toEqual({
       kind: 'refused',
       outcome: 'refused_at_proposal',
+      proposalId: 'p9',
       customerMessage: 'This order has already shipped.',
+      escalated: false,
     });
+    expect(state.escalation).toBeNull();
   });
 
   it('a fault can never arrive as a policy notice, which would disguise breakage as a decision', () => {
@@ -200,7 +212,13 @@ describe('when the confirm or reject route answers with an error', () => {
       customerMessage: 'This order has now been dispatched.',
     });
     expect(reply(state).proposal.status).toBe(PROPOSAL_STATUS.DECIDED);
-    expect(reply(state).policy).toEqual({ kind: 'stale', outcome: null, customerMessage: 'This order has now been dispatched.' });
+    expect(reply(state).policy).toEqual({
+      kind: 'stale',
+      outcome: null,
+      proposalId: 'p1',
+      customerMessage: 'This order has now been dispatched.',
+      escalated: false,
+    });
     expect(reply(state).outcome).toBeNull();
   });
 
@@ -224,6 +242,84 @@ describe('when the confirm or reject route answers with an error', () => {
   });
 });
 
+describe('ONLY THE SERVER CAN SAY A COLLEAGUE IS COMING (ADR 0010)', () => {
+  const policy = (data) => ({ type: 'policy', data: { kind: 'refused', outcome: 'escalated_at_proposal', proposalId: 'p3', customerMessage: 'A colleague will check.', ...data } });
+
+  it('a notice the server flagged as escalated marks the turn and the conversation', () => {
+    const state = reduce([send(), policy({ escalated: true })]);
+    expect(reply(state).policy.escalated).toBe(true);
+    expect(state.escalation).toEqual({ status: ESCALATION_STATUS.ESCALATED });
+  });
+
+  it('anything but a literal true is not an escalation', () => {
+    for (const value of [undefined, 'true', 1, null]) {
+      const state = reduce([send(), policy({ escalated: value })]);
+      expect(reply(state).policy.escalated).toBe(false);
+      expect(state.escalation).toBeNull();
+    }
+  });
+
+  it('a late notice with no streaming turn marks nothing', () => {
+    const state = reduce([send(), { type: 'done', data: {} }, policy({ escalated: true })]);
+    expect(state.escalation).toBeNull();
+  });
+
+  it('an ungrounded answer offers a person; a grounded one does not', () => {
+    expect(reply(reduce([send(), { type: 'done', data: { shouldEscalate: true } }])).offerEscalation).toBe(true);
+    expect(reply(reduce([send(), { type: 'done', data: { grounded: true } }])).offerEscalation).toBe(false);
+    expect(reply(reduce([send(), { type: 'done', data: { shouldEscalate: 'yes' } }])).offerEscalation).toBe(false);
+  });
+
+  it('an offer escalates nothing by itself', () => {
+    expect(reduce([send(), { type: 'done', data: { shouldEscalate: true } }]).escalation).toBeNull();
+  });
+
+  it('asking: requesting, then escalated only when the route answers success', () => {
+    const requesting = reduce([send(), { type: 'done', data: {} }, { type: 'escalationRequested' }]);
+    expect(requesting.escalation).toEqual({ status: ESCALATION_STATUS.REQUESTING });
+    expect(conversationReducer(requesting, { type: 'escalationRequested' })).toBe(requesting);
+    expect(conversationReducer(requesting, { type: 'escalationSucceeded' }).escalation).toEqual({
+      status: ESCALATION_STATUS.ESCALATED,
+    });
+  });
+
+  it('a failed request can be made again, and once escalated there is nothing more to ask', () => {
+    const failed = reduce([{ type: 'escalationRequested' }, { type: 'escalationFailed' }]);
+    expect(failed.escalation).toEqual({ status: ESCALATION_STATUS.FAILED });
+    expect(conversationReducer(failed, { type: 'escalationRequested' }).escalation.status).toBe(ESCALATION_STATUS.REQUESTING);
+
+    const done = reduce([{ type: 'escalationRequested' }, { type: 'escalationSucceeded' }]);
+    expect(conversationReducer(done, { type: 'escalationRequested' })).toBe(done);
+    expect(conversationReducer(done, { type: 'escalationFailed' })).toBe(done);
+  });
+
+  it('a refusal at execution that escalated settles the proposal and marks the conversation', () => {
+    const pending = reduce([send(), proposalFrame, { type: 'done', data: {} }]);
+    const state = conversationReducer(pending, {
+      type: 'proposalRefused',
+      proposalId: 'p1',
+      kind: 'stale',
+      customerMessage: "I'll bring in a colleague.",
+      escalated: true,
+    });
+    expect(reply(state).proposal.status).toBe(PROPOSAL_STATUS.DECIDED);
+    expect(reply(state).policy.escalated).toBe(true);
+    expect(state.escalation.status).toBe(ESCALATION_STATUS.ESCALATED);
+  });
+
+  it('a terminal failure that escalated settles the proposal: retrying could not work', () => {
+    const pending = reduce([send(), proposalFrame, { type: 'done', data: {} }]);
+    const state = conversationReducer(pending, { type: 'proposalRefused', proposalId: 'p1', kind: 'fault', escalated: true });
+    expect(reply(state).proposal.status).toBe(PROPOSAL_STATUS.DECIDED);
+    expect(state.escalation.status).toBe(ESCALATION_STATUS.ESCALATED);
+  });
+
+  it('the conversation stays escalated as it carries on', () => {
+    const state = reduce([send(), policy({ escalated: true }), { type: 'done', data: {} }, send('Thanks', 't2')]);
+    expect(state.escalation.status).toBe(ESCALATION_STATUS.ESCALATED);
+  });
+});
+
 describe('purity', () => {
   it('never mutates the state it was given', () => {
     const frozen = deepFreeze(reduce([send(), proposalFrame]));
@@ -231,8 +327,10 @@ describe('purity', () => {
       reduce(
         [
           { type: 'token', text: 'more' },
-          { type: 'done', data: {} },
+          { type: 'done', data: { shouldEscalate: true } },
           { type: 'proposalDecided', proposalId: 'p1', outcome: 'executed' },
+          { type: 'escalationRequested' },
+          { type: 'escalationSucceeded' },
         ],
         frozen,
       ),

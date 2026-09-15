@@ -4,17 +4,18 @@ import { isPolicyKind } from './outcomes.js';
  * The conversation, as a reducer: stream frames in, transcript out.
  *
  * A pure function, for the same reason the policy engine is one. The screen
- * built on it has a rule that matters more than any styling:
+ * built on it has two rules that matter more than any styling:
  *
  *   ONLY A SERVER DECISION CAN MARK AN ORDER CANCELLED.
+ *   ONLY THE SERVER CAN SAY A COLLEAGUE IS COMING.
  *
  * No stream frame -- not a token, not `done`, not a `proposal` -- can set an
  * outcome. Only `proposalDecided`, dispatched after the confirm or reject route
- * returned success, can. If the transcript could say "cancelled" because of
- * something in the stream, the screen would be one bug away from telling a
- * customer an action happened that the policy engine refused. As a reducer, the
- * rule is a handful of assertions rather than something to hope a component
- * gets right.
+ * returned success, can. And a conversation is marked escalated only by a
+ * notice or an error the server flagged `escalated: true`, or by the escalate
+ * route answering success (ADR 0010). If the transcript could claim either
+ * because of something in the stream, the screen would be one bug away from
+ * telling a customer something that did not happen.
  *
  * Every frame's data is copied field by field. The server already sends only
  * customer-safe fields; copying explicitly means a field that ever appeared by
@@ -31,10 +32,19 @@ export const TURN_STATE = Object.freeze({
 
 export const PROPOSAL_STATUS = Object.freeze({ PENDING: 'pending', DECIDED: 'decided' });
 
+/** One per conversation, because a conversation has at most one active ticket. */
+export const ESCALATION_STATUS = Object.freeze({
+  REQUESTING: 'requesting',
+  ESCALATED: 'escalated',
+  FAILED: 'failed',
+});
+
 /** The two outcomes a customer's decision can produce. */
 const DECIDED_OUTCOMES = new Set(['executed', 'rejected_by_customer']);
 
-export const initialConversation = Object.freeze({ turns: [], streaming: false });
+export const initialConversation = Object.freeze({ turns: [], streaming: false, escalation: null });
+
+const escalated = (state) => ({ ...state, escalation: { status: ESCALATION_STATUS.ESCALATED } });
 
 function lastIndex(turns, predicate) {
   for (let index = turns.length - 1; index >= 0; index -= 1) {
@@ -86,6 +96,7 @@ export function conversationReducer(state, action) {
       const text = typeof action.text === 'string' ? action.text.trim() : '';
       if (!text) return state;
       return {
+        ...state,
         streaming: true,
         turns: [
           ...state.turns,
@@ -100,6 +111,7 @@ export function conversationReducer(state, action) {
             policy: null,
             outcome: null,
             error: null,
+            offerEscalation: false,
           },
         ],
       };
@@ -167,14 +179,18 @@ export function conversationReducer(state, action) {
       // rendering it through the policy language would disguise breakage as a
       // decision (Phase 4 §5).
       if (!isPolicyKind(data?.kind)) return state;
-      return updateStreamingReply(state, (turn) => ({
+      const next = updateStreamingReply(state, (turn) => ({
         ...turn,
         policy: {
           kind: data.kind,
           outcome: typeof data.outcome === 'string' ? data.outcome : null,
+          proposalId: typeof data.proposalId === 'string' ? data.proposalId : null,
           customerMessage: typeof data.customerMessage === 'string' ? data.customerMessage : null,
+          escalated: data.escalated === true,
         },
       }));
+      // A notice the server flagged as escalated means the ticket exists.
+      return next !== state && data.escalated === true ? escalated(next) : next;
     }
 
     case 'error':
@@ -189,7 +205,15 @@ export function conversationReducer(state, action) {
       );
 
     case 'done':
-      return endStreaming(updateStreamingReply(state, (turn) => ({ ...turn, state: TURN_STATE.COMPLETE })));
+      return endStreaming(
+        updateStreamingReply(state, (turn) => ({
+          ...turn,
+          state: TURN_STATE.COMPLETE,
+          // An answer the AI service could not ground offers a person. An
+          // OFFER only: the advisory tier never escalates on its own (ADR 0010).
+          offerEscalation: action.data?.shouldEscalate === true,
+        })),
+      );
 
     case 'cancelled':
       // The partial text stays, visibly marked -- never silently completed and
@@ -217,22 +241,43 @@ export function conversationReducer(state, action) {
     case 'proposalRefused': {
       // The confirm or reject route answered with an error. A policy kind --
       // `stale`, most often, when the order moved on -- settles the proposal:
-      // it can no longer be confirmed. A `fault` does not settle anything, so
-      // the proposal stays pending and the customer can try again.
+      // it can no longer be confirmed. A `fault` settles nothing, so the
+      // proposal stays pending and the customer can try again -- UNLESS the
+      // server escalated it, which means the failure was recorded as terminal
+      // and retrying could not work.
       const kind = action.kind === 'fault' || isPolicyKind(action.kind) ? action.kind : 'fault';
-      return updatePendingProposal(state, action.proposalId, (turn) => ({
+      const wasEscalated = action.escalated === true;
+      const next = updatePendingProposal(state, action.proposalId, (turn) => ({
         ...turn,
         proposal: {
           ...turn.proposal,
-          status: kind === 'fault' ? PROPOSAL_STATUS.PENDING : PROPOSAL_STATUS.DECIDED,
+          status: kind === 'fault' && !wasEscalated ? PROPOSAL_STATUS.PENDING : PROPOSAL_STATUS.DECIDED,
         },
         policy: {
           kind,
           outcome: null,
+          proposalId: action.proposalId,
           customerMessage: typeof action.customerMessage === 'string' ? action.customerMessage : null,
+          escalated: wasEscalated,
         },
       }));
+      return next !== state && wasEscalated ? escalated(next) : next;
     }
+
+    case 'escalationRequested':
+      // Nothing to ask for while a request is in flight or a colleague is
+      // already coming.
+      if (state.escalation?.status === ESCALATION_STATUS.REQUESTING) return state;
+      if (state.escalation?.status === ESCALATION_STATUS.ESCALATED) return state;
+      return { ...state, escalation: { status: ESCALATION_STATUS.REQUESTING } };
+
+    case 'escalationSucceeded':
+      // Dispatched only after the escalate route answered success.
+      return state.escalation?.status === ESCALATION_STATUS.ESCALATED ? state : escalated(state);
+
+    case 'escalationFailed':
+      if (state.escalation?.status !== ESCALATION_STATUS.REQUESTING) return state;
+      return { ...state, escalation: { status: ESCALATION_STATUS.FAILED } };
 
     default:
       return state;

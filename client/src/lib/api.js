@@ -23,7 +23,7 @@ import { ERROR_KIND } from './outcomes.js';
  */
 
 export class ApiError extends Error {
-  constructor({ kind, message, customerMessage, detail, status }) {
+  constructor({ kind, message, customerMessage, detail, status, escalated }) {
     super(message);
     this.name = 'ApiError';
     this.kind = kind;
@@ -32,6 +32,12 @@ export class ApiError extends Error {
     /** Rule key, version, matched conditions. Internal surfaces only. */
     this.detail = detail ?? null;
     this.status = status ?? null;
+    /**
+     * Whether a colleague has already been brought in (ADR 0010). Only the
+     * server's literal `true` counts: the screen must never tell a customer a
+     * colleague is coming on a guess.
+     */
+    this.escalated = escalated === true;
   }
 }
 
@@ -61,9 +67,9 @@ export function csrfHeaders() {
 /**
  * Map a failed response onto the taxonomy.
  *
- * The server is expected to send `{ kind, message, customerMessage, detail }`.
- * The status-code fallbacks exist so that an unexpected failure -- a proxy
- * error page, a crash before the error middleware runs -- still lands
+ * The server is expected to send `{ kind, message, customerMessage, detail,
+ * escalated }`. The status-code fallbacks exist so that an unexpected failure --
+ * a proxy error page, a crash before the error middleware runs -- still lands
  * somewhere sane instead of rendering `undefined` at the user.
  *
  * Note the default is FAULT, not REFUSED. Guessing "refused" would invent a
@@ -92,6 +98,7 @@ async function toApiError(response) {
     customerMessage: body.customerMessage,
     detail: body.detail,
     status: response.status,
+    escalated: body.escalated,
   });
 }
 
