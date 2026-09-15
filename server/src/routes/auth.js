@@ -7,6 +7,7 @@ import { hashPassword, verifyPassword } from '../auth/password.js';
 import { signSessionToken } from '../auth/jwt.js';
 import { setSessionCookie, setCsrfCookie, clearAuthCookies } from '../auth/cookies.js';
 import { buildRegistration, publicUser } from '../auth/registration.js';
+import { checkCredentials } from '../auth/login.js';
 import { Tenant, User, Customer } from '../db/models/index.js';
 
 export const authRouter = Router();
@@ -78,27 +79,24 @@ authRouter.post(
 );
 
 /**
- * POST /api/auth/login
+ * POST /api/auth/login   { tenantSlug, email, password }
  *
- * The password hash is `select: false` on the schema, so it must be asked for
- * explicitly. That default is what stops every other query in the system from
- * carrying a hash it does not need.
+ * The user is found within the named organisation (Phase 12; see
+ * auth/login.js). The password hash is `select: false` on the schema, so it
+ * must be asked for explicitly. That default is what stops every other query in
+ * the system from carrying a hash it does not need.
  */
 authRouter.post(
   '/login',
   authLimiter,
   handle(async (req, res) => {
-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const user = await checkCredentials(req.body, {
+      findTenantBySlug: (slug) => Tenant.findOne({ slug }),
+      findUserForLogin: (tenantId, email) => User.findOne({ tenantId, email }).select('+passwordHash'),
+      verifyPassword,
+    });
 
-    const user = email ? await User.findOne({ email }).select('+passwordHash') : null;
-
-    // verifyPassword runs a full bcrypt comparison even when there is no user,
-    // so a missing account and a wrong password take the same time. Without
-    // that, response timing alone enumerates accounts.
-    const ok = await verifyPassword(password, user?.passwordHash);
-
-    if (!ok || !user || user.status !== 'active') {
+    if (!user) {
       throw new AppError('fault', {
         message: 'Invalid email or password',
         status: 401,

@@ -45,8 +45,10 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const login = useCallback(async (email, password) => {
-    const data = await api.post('/api/auth/login', { email, password });
+  // The organisation is part of signing in: accounts are unique per tenant, so
+  // an email alone does not say which account is meant (Phase 12).
+  const login = useCallback(async (email, password, tenantSlug) => {
+    const data = await api.post('/api/auth/login', { email, password, tenantSlug });
     setUser(data.user);
     return data.user;
   }, []);
