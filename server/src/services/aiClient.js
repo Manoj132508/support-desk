@@ -57,6 +57,44 @@ export function parseFrames(buffer) {
   return { frames, rest };
 }
 
+/** A health check must answer quickly even when what it checks does not. */
+export const AI_HEALTH_TIMEOUT_MS = 1_500;
+
+/**
+ * Is the AI service answering? For /api/health (FR-14.1).
+ *
+ * Until Phase 14 health never asked: it reported `unreachable` whenever a URL
+ * was configured, including while the service was answering turns. Found by
+ * running the whole stack for the first time.
+ *
+ * Never throws, and gives up after a short timeout, so a hung advisory tier
+ * cannot hang the health check that is meant to report it.
+ *
+ *   unconfigured  no AI_SERVICE_URL
+ *   ok            answered, with its embedder loaded
+ *   starting      answered, still loading
+ *   unreachable   no answer, an error status, a malformed body, or too slow
+ */
+export async function probeAiService({
+  url = config.aiServiceUrl,
+  token = config.aiServiceToken,
+  fetchImpl = fetch,
+  timeoutMs = AI_HEALTH_TIMEOUT_MS,
+} = {}) {
+  if (!url) return 'unconfigured';
+  try {
+    const response = await fetchImpl(`${url.replace(/\/$/, '')}/health`, {
+      headers: token ? { 'X-Service-Token': token } : {},
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return 'unreachable';
+    const body = await response.json();
+    return body?.status === 'ok' ? 'ok' : 'starting';
+  } catch {
+    return 'unreachable';
+  }
+}
+
 /**
  * Streams one advisory turn.
  *

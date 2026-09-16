@@ -1,6 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { withServer, call } from './helpers.js';
+import { probeAiService } from '../src/services/aiClient.js';
+
+const answering = (body, { ok = true } = {}) => async () => ({ ok, json: async () => body });
+
+test('the AI service is reported ok only when it actually answers ok', async () => {
+  const base = { url: 'http://ai.test', token: '' };
+  assert.equal(await probeAiService({ ...base, fetchImpl: answering({ status: 'ok' }) }), 'ok');
+  assert.equal(await probeAiService({ ...base, fetchImpl: answering({ status: 'starting' }) }), 'starting');
+  assert.equal(await probeAiService({ ...base, fetchImpl: answering({}, { ok: false }) }), 'unreachable');
+  assert.equal(
+    await probeAiService({ ...base, fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError('not json'); } }) }),
+    'unreachable',
+  );
+  assert.equal(await probeAiService({ ...base, fetchImpl: async () => { throw new TypeError('fetch failed'); } }), 'unreachable');
+  assert.equal(await probeAiService({ url: '', fetchImpl: answering({ status: 'ok' }) }), 'unconfigured');
+});
+
+test('a hung AI service cannot hang the health check', async () => {
+  const hangs = (url, { signal }) =>
+    new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason)));
+  const started = Date.now();
+  assert.equal(await probeAiService({ url: 'http://ai.test', fetchImpl: hangs, timeoutMs: 50 }), 'unreachable');
+  assert.ok(Date.now() - started < 1_000);
+});
+
+test('the probe sends the service token and asks the health path', async () => {
+  let asked = null;
+  await probeAiService({
+    url: 'http://ai.test/',
+    token: 'service-token',
+    fetchImpl: async (url, init) => {
+      asked = { url, token: init.headers['X-Service-Token'] };
+      return { ok: true, json: async () => ({ status: 'ok' }) };
+    },
+  });
+  assert.deepEqual(asked, { url: 'http://ai.test/health', token: 'service-token' });
+});
 
 test('FR-14.1: health reports each dependency independently', async () => {
   await withServer(async (base) => {

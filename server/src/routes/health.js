@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { config } from '../config/env.js';
 import { databaseState } from '../db/connect.js';
+import { probeAiService } from '../services/aiClient.js';
 
 export const healthRouter = Router();
 
@@ -21,13 +21,11 @@ export const healthRouter = Router();
  * problems with different fixes, and collapsing them wastes the first ten
  * minutes of every incident.
  */
-healthRouter.get('/health', (req, res) => {
-  // The database probe is real as of Phase 7 -- it reports the live connection
-  // state. The AI service probe is still a placeholder; Phase 9 builds the
-  // service, and reporting "ok" for something never checked would be a lie
-  // that only surfaces during an incident.
+healthRouter.get('/health', async (req, res) => {
+  // Both probes are real: the database reports its live connection state
+  // (Phase 7), and the AI service is asked (Phase 14 -- see probeAiService).
   const database = databaseState();
-  const aiService = config.aiServiceUrl ? 'unreachable' : 'unconfigured';
+  const aiService = await probeAiService();
 
   const checks = { api: 'ok', database, aiService };
   const status = Object.values(checks).every((value) => value === 'ok') ? 'ok' : 'degraded';
