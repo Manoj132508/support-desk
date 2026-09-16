@@ -24,9 +24,21 @@ architectural property rather than a hope.
 
 ## Status
 
-**Phase 9 of 17 — the AI service is in.** 167 tests pass across three suites, and CI runs all
-three on every push. This repository is public from Phase 1 on purpose, so CI runs
-during the build rather than after it.
+**Phase 15 of 17 — deployable.** 867 tests pass across three suites (server 582, client 151, AI
+service 134), and CI runs all three on every push, with the policy eval gating unauthorised
+actions at exactly zero. This repository is public from Phase 1 on purpose, so CI runs during the
+build rather than after it. This README is rewritten in Phase 16; until then, the phase documents
+below are current.
+
+### Deploying
+
+`docker compose up --build` runs the whole system: nginx, the API, the AI service, and MongoDB as a
+replica set. See [DEPLOYMENT.md](DEPLOYMENT.md).
+
+**Stated plainly, as NFR-7 requires: Docker is not installed on the machine this was built on.**
+The images and compose file are built, started and checked from outside on every push by the
+[Deploy check](.github/workflows/deploy.yml) workflow on GitHub's runners. They have not been
+built locally.
 
 ### Running it
 
@@ -81,7 +93,13 @@ standalone `mongod` cannot do that. A local replica-set fallback is documented i
 | [Phase 7 — Database integration](docs/phases/phase-07-database-integration.md) | Eleven models, append-only enforcement, tenancy in the query |
 | [Phase 8 — Authentication](docs/phases/phase-08-authentication.md) | Ported session auth, CSRF, roles, and default-on route protection |
 | [Phase 9 — KB ingest & AI service](docs/phases/phase-09-kb-ingest-and-ai-service.md) | Retrieval ported from Project 1, grounded answers, the frame allowlist |
-| [Decision records](docs/adr/README.md) | Nine ADRs — start with [0002](docs/adr/0002-llm-proposes-never-authorises.md) |
+| [Phase 10 — The core](docs/phases/phase-10-the-core.md) | The policy engine, propose → confirm → execute, the audit, the conversation screen |
+| [Phase 11 — Escalation & tickets](docs/phases/phase-11-escalation-and-ticket-lifecycle.md) | When a person is brought in, the ticket lifecycle, the agent console |
+| [Phase 12 — Security & privacy](docs/phases/phase-12-security-and-privacy.md) | Review findings, the OWASP pass on confirm, account deletion, retention |
+| [Phase 13 — Evals](docs/phases/phase-13-evals.md) | The policy eval that gates CI, the escalation eval, the tuned threshold |
+| [Phase 14 — Performance](docs/phases/phase-14-performance.md) | Time to first token measured, the prompt shape that fixed it, query plans |
+| [Phase 15 — Deployment & CI](docs/phases/phase-15-deployment-and-ci.md) | Compose with a replica set, the CSP, indexes as a deploy step, CI that runs the stack |
+| [Decision records](docs/adr/README.md) | Eleven ADRs — start with [0002](docs/adr/0002-llm-proposes-never-authorises.md) |
 
 ---
 
