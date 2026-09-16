@@ -73,11 +73,24 @@ export async function connectDatabase() {
  * inside a transaction -- fails. That failure would arrive in production, on
  * the mutating route, which is the worst place to discover a configuration
  * mistake. So we find out now.
+ *
+ * THE READ INSIDE THE TRANSACTION IS THE CHECK. The first version started a
+ * transaction and aborted it with nothing in between, and it never failed: the
+ * driver treats a transaction with no operations as client-side state, so
+ * nothing reached the server for it to refuse. Pointed at a real standalone
+ * mongod on 2026-09-16, that version let the API start, and a transactional
+ * write then failed with "Transaction numbers are only allowed on a replica
+ * set member or mongos". A read carries the transaction number, so a standalone
+ * rejects it here, at startup. It reads a collection that need not exist, and
+ * reading creates nothing.
  */
-async function assertTransactionsAvailable() {
-  const session = await mongoose.startSession();
+export const TRANSACTION_PROBE_COLLECTION = 'transaction_probe';
+
+export async function assertTransactionsAvailable(connection = mongoose.connection) {
+  const session = await connection.startSession();
   try {
     session.startTransaction();
+    await connection.db.collection(TRANSACTION_PROBE_COLLECTION).findOne({}, { session });
     await session.abortTransaction();
   } catch (error) {
     throw new Error(
@@ -88,6 +101,8 @@ async function assertTransactionsAvailable() {
         error.message,
     );
   } finally {
+    // Ending a session aborts any transaction still open on it, including one
+    // left open by the read failing.
     await session.endSession();
   }
 }
