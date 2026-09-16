@@ -17,9 +17,12 @@ import { formatDuration, summarise } from './stats.js';
  * so every hop is included: the Vite proxy, authentication, the database, the
  * AI service, and the model when one is called.
  *
- * Each turn is sent in a NEW conversation, so every sample has the same empty
- * history. A long conversation sends more history to the model and reads more
- * slowly; that is not what this measures.
+ * Each turn is sent in a NEW conversation, and two of them are followed by a
+ * second question in the same conversation, reported separately as
+ * "(follow-up)". A follow-up carries history, and history once pushed the
+ * sources to a different place in every conversation's prompt, which made the
+ * model read them from scratch (ADR 0011). A harness of first turns only would
+ * never have shown it.
  *
  * NFR-1 names one number, but a turn's first token means different things by
  * kind: on a proposal, a handoff or a request for an order number no model is
@@ -32,9 +35,17 @@ import { formatDuration, summarise } from './stats.js';
  */
 
 export const TURNS = Object.freeze([
-  { expected: 'answered', message: 'How long do I have to return something?' },
+  {
+    expected: 'answered',
+    message: 'How long do I have to return something?',
+    followUp: 'If I send something back because I changed my mind, do I get the postage back?',
+  },
   { expected: 'offered_person', message: 'What is the capital of France?' },
-  { expected: 'answered', message: 'Can I cancel an order after it has been dispatched?' },
+  {
+    expected: 'answered',
+    message: 'Can I cancel an order after it has been dispatched?',
+    followUp: 'How long until the money from a cancelled order is released?',
+  },
   { expected: 'propose', message: 'Please cancel my order 1043.', customer: 'ana@acme.test' },
   { expected: 'answered', message: 'When will my refund appear after you receive the return?' },
   { expected: 'ask_order_number', message: 'I want to cancel my order' },
@@ -118,11 +129,14 @@ function authedHeaders(jar) {
   return { Cookie: jar.header(), [CSRF_HEADER]: jar.get(CSRF_COOKIE), 'Content-Type': 'application/json' };
 }
 
-async function timeTurn(base, jar, message) {
-  const created = await fetch(`${base}/api/conversations`, { method: 'POST', headers: authedHeaders(jar), body: '{}' });
-  if (created.status !== 201) throw new Error(`Creating a conversation returned ${created.status}`);
-  const { conversation } = await created.json();
-  const id = conversation.id ?? conversation._id;
+async function timeTurn(base, jar, message, conversationId = null) {
+  let id = conversationId;
+  if (!id) {
+    const created = await fetch(`${base}/api/conversations`, { method: 'POST', headers: authedHeaders(jar), body: '{}' });
+    if (created.status !== 201) throw new Error(`Creating a conversation returned ${created.status}`);
+    const { conversation } = await created.json();
+    id = conversation.id ?? conversation._id;
+  }
 
   const started = performance.now();
   const response = await fetch(`${base}/api/conversations/${id}/messages`, {
@@ -131,6 +145,7 @@ async function timeTurn(base, jar, message) {
     body: JSON.stringify({ content: message }),
   });
   const sample = {
+    conversationId: id,
     status: response.status,
     correlationId: response.headers.get('x-correlation-id'),
     headersMs: performance.now() - started,
@@ -173,22 +188,39 @@ export async function runTtft({ base, repeats = 1, customers = ['ana@acme.test',
 
   const samples = [];
   let rotation = 0;
+  const send = async ({ email, message, expected, round, conversationId = null, followUp = false }) => {
+    const wait = MIN_GAP_PER_CUSTOMER_MS - (performance.now() - (lastSent.get(email) ?? -Infinity));
+    if (wait > 0) await sleep(wait);
+    lastSent.set(email, performance.now());
+
+    const timed = await timeTurn(base, jars.get(email), message, conversationId);
+    const observed = observedKind(timed.done);
+    const sample = {
+      index: samples.length,
+      round,
+      followUp,
+      expected,
+      // A follow-up is its own row: it is the turn that carries history.
+      kind: observed && followUp ? `${observed} (follow-up)` : observed,
+      ...timed,
+    };
+    samples.push(sample);
+    log(
+      `  ${String(sample.index + 1).padStart(3)}  ${(sample.kind ?? `status ${sample.status}`).padEnd(28)}` +
+        `first token ${sample.firstTokenMs === null ? '   --  ' : formatDuration(sample.firstTokenMs).padStart(9)}` +
+        `  done ${sample.finishedMs === null ? '--' : formatDuration(sample.finishedMs).padStart(9)}` +
+        `${observed && observed !== expected ? `  (expected ${expected})` : ''}${sample.error ? `  error: ${sample.error}` : ''}`,
+    );
+    return sample;
+  };
+
   for (let round = 0; round < repeats; round += 1) {
     for (const turn of TURNS) {
       const email = turn.customer ?? customers[rotation++ % customers.length];
-      const wait = MIN_GAP_PER_CUSTOMER_MS - (performance.now() - (lastSent.get(email) ?? -Infinity));
-      if (wait > 0) await sleep(wait);
-      lastSent.set(email, performance.now());
-
-      const timed = await timeTurn(base, jars.get(email), turn.message);
-      const sample = { index: samples.length, round, expected: turn.expected, kind: observedKind(timed.done), ...timed };
-      samples.push(sample);
-      log(
-        `  ${String(sample.index + 1).padStart(3)}  ${(sample.kind ?? `status ${sample.status}`).padEnd(17)}` +
-          `first token ${sample.firstTokenMs === null ? '   --  ' : formatDuration(sample.firstTokenMs).padStart(9)}` +
-          `  done ${sample.finishedMs === null ? '--' : formatDuration(sample.finishedMs).padStart(9)}` +
-          `${sample.kind && sample.kind !== turn.expected ? `  (expected ${turn.expected})` : ''}${sample.error ? `  error: ${sample.error}` : ''}`,
-      );
+      const first = await send({ email, message: turn.message, expected: turn.expected, round });
+      if (turn.followUp && first.status === 200) {
+        await send({ email, message: turn.followUp, expected: 'answered', round, conversationId: first.conversationId, followUp: true });
+      }
     }
   }
   return { base, repeats, at: new Date().toISOString(), samples, summary: summariseTurns(samples) };
@@ -197,11 +229,11 @@ export async function runTtft({ base, repeats = 1, customers = ['ana@acme.test',
 function printSummary({ summary }) {
   const line = '='.repeat(84);
   console.log(`\n${line}\n  TIME TO FIRST TOKEN -- NFR-1 (p95 budget ${formatDuration(summary.budgetMs)})\n${line}`);
-  console.log(`  ${'kind'.padEnd(18)}${'n'.padStart(4)}${'p50'.padStart(11)}${'p95'.padStart(11)}${'max'.padStart(11)}   verdict`);
+  console.log(`  ${'kind'.padEnd(28)}${'n'.padStart(4)}${'p50'.padStart(11)}${'p95'.padStart(11)}${'max'.padStart(11)}   verdict`);
   const rows = [...Object.entries(summary.byKind), ...(summary.overall ? [['ALL TURNS', summary.overall]] : [])];
   for (const [kind, row] of rows) {
     console.log(
-      `  ${kind.padEnd(18)}${String(row.n).padStart(4)}${formatDuration(row.p50).padStart(11)}` +
+      `  ${kind.padEnd(28)}${String(row.n).padStart(4)}${formatDuration(row.p50).padStart(11)}` +
         `${formatDuration(row.p95).padStart(11)}${formatDuration(row.max).padStart(11)}   ${row.meetsBudget ? 'meets' : 'MISSES'}`,
     );
   }

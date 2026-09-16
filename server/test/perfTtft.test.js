@@ -51,3 +51,17 @@ test('the turn mix covers every kind of turn, with the model-calling kind the mo
   assert.deepEqual(Object.keys(counts).sort(), ['answered', 'ask_order_number', 'offered_person', 'propose']);
   assert.ok(counts.answered > counts.offered_person);
 });
+
+test('some answers are followed up in the same conversation, because history changes the prompt', () => {
+  const followed = TURNS.filter((turn) => turn.followUp);
+  assert.ok(followed.length >= 2);
+  assert.ok(followed.every((turn) => turn.expected === 'answered'));
+});
+
+test('a follow-up is summarised apart from first turns', () => {
+  const summary = summariseTurns([
+    { kind: 'answered', firstTokenMs: 900 },
+    { kind: 'answered (follow-up)', firstTokenMs: 2_100 },
+  ]);
+  assert.deepEqual(Object.keys(summary.byKind).sort(), ['answered', 'answered (follow-up)']);
+});
