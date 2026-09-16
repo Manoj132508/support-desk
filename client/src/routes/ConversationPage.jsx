@@ -3,6 +3,7 @@ import Button from '../components/primitives/Button.jsx';
 import ConfirmationDialog from '../components/ConfirmationDialog.jsx';
 import PolicyBlock from '../components/PolicyBlock.jsx';
 import { api, ApiError } from '../lib/api.js';
+import { citedSources } from '../lib/citedSources.js';
 import { isPolicyKind } from '../lib/outcomes.js';
 import { useEventStream } from '../lib/useEventStream.js';
 import {
@@ -63,6 +64,7 @@ function AssistantTurn({ turn, escalation, onReview, onEscalate }) {
   const conversationEscalated = escalation?.status === ESCALATION_STATUS.ESCALATED;
   const requesting = escalation?.status === ESCALATION_STATUS.REQUESTING;
   const policyKind = turn.policy ? isPolicyKind(turn.policy.kind) : false;
+  const sources = citedSources(turn.evidence, turn.text, { streaming: turn.state === TURN_STATE.STREAMING });
 
   return (
     <li className={styles.assistant}>
@@ -74,10 +76,14 @@ function AssistantTurn({ turn, escalation, onReview, onEscalate }) {
       )}
       {turn.state === TURN_STATE.CANCELLED && <p className={styles.marker}>Stopped</p>}
 
-      {turn.evidence.length > 0 && (
+      {sources.length > 0 && (
         <ol className={styles.sources} aria-label="Sources">
-          {turn.evidence.map((item) => (
-            <li key={item.ref}>{[item.documentName, item.section].filter(Boolean).join(' — ') || item.ref}</li>
+          {sources.map((item) => (
+            // `value` keeps the number the answer's [n] marker uses, even when
+            // only some sources are listed.
+            <li key={item.ref} value={item.n ?? undefined}>
+              {[item.documentName, item.section].filter(Boolean).join(' — ') || item.ref}
+            </li>
           ))}
         </ol>
       )}

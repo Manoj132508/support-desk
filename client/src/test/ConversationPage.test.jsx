@@ -114,6 +114,23 @@ describe('ConversationPage — sending', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Response complete');
   });
 
+  it('ADR 0011: lists the sources the answer cites, numbered as its markers are', async () => {
+    const evidence = [1, 2, 3, 4, 5, 6, 7].map((n) =>
+      frame('evidence', { kind: 'kb_chunk', ref: `kb:${n}`, n, documentName: `Article ${n}`, section: null }),
+    );
+    stubStream([...evidence, frame('token', 'You have 30 days [6], and postage is not refunded [7].'), frame('done', {})]);
+    const user = userEvent.setup();
+    render(<ConversationPage client={makeClient()} />);
+
+    await ask(user, 'How long do I have to return something?');
+
+    const sources = await screen.findByRole('list', { name: 'Sources' });
+    const items = within(sources).getAllByRole('listitem');
+    expect(items.map((item) => item.textContent)).toEqual(['Article 6', 'Article 7']);
+    // The list's own numbers are the markers' numbers, not 1 and 2.
+    expect(items.map((item) => item.value)).toEqual([6, 7]);
+  });
+
   it('keeps what was typed when the conversation cannot be started', async () => {
     const fetchMock = stubStream([]);
     const client = makeClient({ '/api/conversations': new ApiError({ kind: 'fault', message: 'down', status: 500 }) });
