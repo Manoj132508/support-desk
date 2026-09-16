@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { config, productionConfigProblems } from './config/env.js';
-import { connectDatabase } from './db/connect.js';
+import { connectDatabase, disconnectDatabase } from './db/connect.js';
+import { makeShutdown } from './shutdown.js';
 
 /**
  * Refuse to start an unsafe production deployment (Phase 12). The problems name
@@ -39,7 +40,7 @@ try {
 
 const app = createApp();
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(
     JSON.stringify({
       level: 'info',
@@ -50,3 +51,9 @@ app.listen(config.port, () => {
     }),
   );
 });
+
+// SIGTERM from `docker stop` or an orchestrator; SIGINT from Ctrl+C and from
+// `node --watch` restarting in development (Phase 15, shutdown.js).
+const shutdown = makeShutdown({ server, disconnect: disconnectDatabase, exit: (code) => process.exit(code) });
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
