@@ -16,6 +16,7 @@ that were rejected and why.
 | [0008](0008-policy-rules-tenant-scoped-with-global-baseline.md) | Policy rules are tenant-scoped over a global baseline | Accepted | INV-A |
 | [0009](0009-confirmation-is-a-deliberate-modal.md) | Confirmation is a deliberate modal; friction is the feature | Accepted | **INV-A** |
 | [0010](0010-escalation-automatic-offered-or-none.md) | Escalation is automatic, offered, or absent; only the deterministic tier escalates on its own | Accepted | INV-A |
+| [0011](0011-prompt-shape-for-prompt-reuse.md) | A small help centre is sent whole, in a fixed order, in the system message | Accepted | NFR-1 (preserves INV-C) |
 
 ADRs 0003, 0004 and 0006 carry **amendments** added in Phase 3, where designing the schema
 surfaced errors in them. The amendments are appended to each ADR rather than edited into the

@@ -15,7 +15,7 @@ REFUSAL_TEXT = "I couldn't find an answer to that in our help centre."
 
 SYSTEM_PROMPT = f"""\
 You are a customer support assistant. You answer questions using ONLY the \
-numbered sources provided in the user's message.
+numbered sources provided.
 
 Rules:
 - Use only information present in the sources. Do not use outside knowledge, \
@@ -65,6 +65,21 @@ def build_sources_block(chunks: list[RetrievedChunk]) -> str:
     return "\n\n".join(lines)
 
 
+def canonical_order(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    """Chunks in help-centre order -- article, then position -- whatever their scores.
+
+    ADR 0011. The same chunks always render in the same order, so two prompts
+    built from them start with the same text, and the model can reuse its
+    reading of it.
+    """
+
+    def key(chunk: RetrievedChunk) -> tuple[str, int]:
+        document, _, index = chunk.chunk_id.rpartition(":")
+        return (document, int(index) if index.isdigit() else 0)
+
+    return sorted(chunks, key=key)
+
+
 def build_user_message(question: str, chunks: list[RetrievedChunk]) -> str:
     """Assembles sources plus question.
 
@@ -72,6 +87,11 @@ def build_user_message(question: str, chunks: list[RetrievedChunk]) -> str:
     prompt sits at the front where prompt caching can reuse it across turns,
     and instructions placed after a long context are followed more reliably
     than ones buried above it.
+
+    Phase 14 measured that the first reason does not hold for this message:
+    sources in score order differ from one question to the next, so nothing
+    after the system prompt is ever reused. It remains the prompt for a help
+    centre too large to send whole; see `build_whole_help_centre_system`.
     """
     return f"""Sources:
 
@@ -80,6 +100,40 @@ def build_user_message(question: str, chunks: list[RetrievedChunk]) -> str:
 ---
 
 Question: {question}"""
+
+
+def build_whole_help_centre_system(chunks: list[RetrievedChunk]) -> str:
+    """The system prompt with the WHOLE help centre, in `canonical_order`. ADR 0011.
+
+    Identical for every question and every conversation, so the model reads it
+    once and reuses that reading. On the development machine's CPU that took an
+    answer's first token from 8-17 s to about 1 s (Phase 14).
+
+    In the SYSTEM message, not the user's: conversation history sits between the
+    two, so sources in the user message start at a different place in every
+    conversation. Measured, a follow-up turn's prompt then took 23.7 s to read,
+    against about 2 s here.
+    """
+    return f"""{SYSTEM_PROMPT}
+
+Sources:
+
+{build_sources_block(chunks)}"""
+
+
+def build_question_message(question: str, relevant: list[int]) -> str:
+    """The only part of a whole-help-centre prompt that changes per question.
+
+    `relevant` names, by number, the sources that cleared the grounding
+    threshold. With the sources in help-centre order, their position no longer
+    says which ones matter, and without this line a spot check found the model
+    merging two unrelated sections into one wrong answer. With it, that answer
+    was right.
+    """
+    hint = ""
+    if relevant:
+        hint = "The sources most relevant to this question are " + ", ".join(f"[{n}]" for n in relevant) + ".\n\n"
+    return f"{hint}Question: {question}"
 
 
 def build_history_messages(history: list[dict], limit: int = 3) -> list[dict]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from app.config import settings
 from app.pipeline.generator import ScriptedGenerator
 from app.pipeline.loader import load_kb
 from app.pipeline.prompt import REFUSAL_TEXT, SYSTEM_PROMPT
@@ -45,16 +46,20 @@ def test_a_grounded_question_reaches_the_model_with_its_sources():
 
     # The assertion that matters is about the PROMPT, not the answer. A model's
     # output is not a stable thing to test; what the model was shown is.
+    # The help centre is small, so it is sent whole in the system message
+    # (ADR 0011); test_prompt_shape.py covers that shape in detail.
     system, messages = generator.calls[0]
-    assert system == SYSTEM_PROMPT
-    assert "Sources:" in messages[-1]["content"]
-    assert "Question: can I cancel" in messages[-1]["content"]
+    assert system.startswith(SYSTEM_PROMPT)
+    assert "Sources:" in system
+    assert messages[-1]["content"].endswith("Question: can I cancel an order before it is dispatched")
 
 
-def test_sources_come_before_the_question():
+def test_sources_come_before_the_question(monkeypatch):
     # The long stable part sits where prompt caching can reuse it, and
     # instructions placed after a long context are followed more reliably than
-    # ones buried above it.
+    # ones buried above it. Checked for a help centre too large to send whole,
+    # where sources and question share the user message.
+    monkeypatch.setattr(settings, "full_context_max_chunks", 0)
     embedder, store = _loaded()
     plan = plan_turn(question="cancel an order", history=[], embedder=embedder, store=store)
     content = plan.messages[-1]["content"]

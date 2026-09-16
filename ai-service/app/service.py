@@ -25,9 +25,17 @@ from app.pipeline.prompt import (
     REFUSAL_TEXT,
     SYSTEM_PROMPT,
     build_history_messages,
+    build_question_message,
     build_user_message,
+    build_whole_help_centre_system,
+    canonical_order,
 )
-from app.pipeline.retrieval import Embedder, VectorStore, retrieve
+from app.pipeline.retrieval import Embedder, RetrievedChunk, VectorStore, retrieve
+
+# What a prompt was built from: the whole help centre (ADR 0011), or the
+# retrieved chunks because the help centre is too large to send whole.
+WHOLE_HELP_CENTRE = "whole"
+RETRIEVED = "retrieved"
 
 
 @dataclass(frozen=True)
@@ -76,6 +84,29 @@ class TurnPlan:
     system: str
     messages: list[dict]
     action: ActionPlan | None = None
+    # Set only when the model will be called. For the timing log.
+    context: str | None = None
+
+
+def _citations(chunks: list[RetrievedChunk]) -> list[Citation]:
+    """Numbered from 1 in the order given, which must be the order the model sees."""
+    return [
+        Citation(
+            n=position,
+            chunk_id=chunk.chunk_id,
+            document_id=chunk.document_id,
+            document_name=chunk.document_name,
+            section=chunk.section,
+            score=chunk.score,
+        )
+        for position, chunk in enumerate(chunks, start=1)
+    ]
+
+
+def sends_whole_help_centre(store: VectorStore) -> tuple[bool, int]:
+    """Whether an answer's prompt holds every chunk (ADR 0011), and how many there are."""
+    total = store.count(settings.collection)
+    return 0 < total <= settings.full_context_max_chunks, total
 
 
 def plan_turn(
@@ -92,26 +123,20 @@ def plan_turn(
     the model be shown -- assertable without a model in the loop, which is the
     only way they can be asserted at all while live inference is blocked here.
     """
+    whole, total = sends_whole_help_centre(store)
+    # One search either way. For a whole-help-centre prompt it scores every
+    # chunk, because all of them are shown; the grounding decision still reads
+    # only the best score, so it is the same decision.
     result = retrieve(
         query=question,
         collection=settings.collection,
         embedder=embedder,
         store=store,
-        top_k=settings.top_k,
+        top_k=total if whole else settings.top_k,
         score_threshold=settings.score_threshold,
     )
-
-    citations = [
-        Citation(
-            n=position,
-            chunk_id=chunk.chunk_id,
-            document_id=chunk.document_id,
-            document_name=chunk.document_name,
-            section=chunk.section,
-            score=chunk.score,
-        )
-        for position, chunk in enumerate(result.chunks, start=1)
-    ]
+    ranked = result.chunks[: settings.top_k]
+    citations = _citations(ranked)
 
     request = detect_action_request(question)
     if request is not None:
@@ -159,19 +184,47 @@ def plan_turn(
             messages=[],
         )
 
-    messages = [
-        *build_history_messages(history),
-        {"role": "user", "content": build_user_message(question, result.chunks)},
-    ]
+    if whole:
+        # ADR 0011. Every source, in help-centre order, in the system message:
+        # the same text for every question and conversation, so the model
+        # reuses its reading of it. The sources that cleared the threshold are
+        # named by number next to the question.
+        shown = canonical_order(result.chunks)
+        position = {chunk.chunk_id: n for n, chunk in enumerate(shown, start=1)}
+        relevant = [position[chunk.chunk_id] for chunk in ranked if chunk.score >= settings.score_threshold]
+        system = build_whole_help_centre_system(shown)
+        question_message = build_question_message(question, relevant)
+    else:
+        shown = ranked
+        system = SYSTEM_PROMPT
+        question_message = build_user_message(question, ranked)
 
     return TurnPlan(
         grounded=True,
         should_escalate=False,
         top_score=result.top_score,
-        citations=citations,
-        system=SYSTEM_PROMPT,
-        messages=messages,
+        # Numbered as the model sees the sources, so every [n] it writes has a
+        # footnote.
+        citations=_citations(shown),
+        system=system,
+        messages=[*build_history_messages(history), {"role": "user", "content": question_message}],
+        context=WHOLE_HELP_CENTRE if whole else RETRIEVED,
     )
+
+
+def warm_up_prompt(embedder: Embedder, store: VectorStore) -> tuple[str, list[dict]]:
+    """The start every answer's prompt shares, for priming the model at startup.
+
+    For a whole-help-centre prompt that is the system message with every source;
+    otherwise only the system prompt is shared. The question is a placeholder:
+    it is the part that is never reused.
+    """
+    whole, total = sends_whole_help_centre(store)
+    placeholder = [{"role": "user", "content": "Question: (warm-up)"}]
+    if not whole:
+        return SYSTEM_PROMPT, placeholder
+    chunks = store.query(settings.collection, embedder.embed_query("warm-up"), total)
+    return build_whole_help_centre_system(canonical_order(chunks)), placeholder
 
 
 async def stream_answer(

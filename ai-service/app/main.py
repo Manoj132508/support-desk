@@ -8,23 +8,58 @@ questions and proposes, and is not publicly routable.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings, startup_problems
 from app.pipeline.generator import OllamaGenerator
 from app.pipeline.loader import load_kb
-from app.service import TurnPlan, plan_turn, stream_answer
+from app.service import TurnPlan, plan_turn, stream_answer, warm_up_prompt
 from app.timing import TurnClock, log_event
 
 state: dict = {"embedder": None, "store": None, "generator": None}
+
+
+async def warm_up() -> None:
+    """Pays the cold costs before a customer does. Phase 14.
+
+    Measured on the development machine, the first answer after a start waited
+    38 s for its first token: 16 s for Ollama to load the model and 22 s to read
+    a prompt nothing had read before. This makes both happen at startup, and
+    again after the help centre is re-indexed, when the shared start of every
+    prompt has changed.
+
+    In the background, so the service answers health checks and static turns
+    while it runs, and never fatal: a model that cannot be reached here is
+    reported by the first turn that needs it, exactly as before.
+    """
+    clock = TurnClock()
+    fields: dict = {}
+    outcome = "complete"
+    try:
+        embedder, store, generator = state["embedder"], state["store"], state["generator"]
+        # An embedder's first inference is slower than every later one.
+        await run_in_threadpool(embedder.embed_query, "warm-up")
+        clock.mark("embedder")
+        prime = getattr(generator, "prime", None)
+        if prime is not None:
+            system, messages = await run_in_threadpool(warm_up_prompt, embedder, store)
+            fields["model"] = await prime(system, messages)
+            clock.mark("model")
+    except Exception as error:  # noqa: BLE001 - a warm-up must never stop the service
+        outcome = "failed"
+        fields["error"] = type(error).__name__
+    log_event("warm_up", outcome=outcome, embedder_ms=clock.ms("embedder"), model_ms=clock.ms("model"), **fields)
 
 
 @asynccontextmanager
@@ -52,7 +87,12 @@ async def lifespan(app: FastAPI):
         state["store"] = ChromaVectorStore(settings.index_path)
     if state["generator"] is None:
         state["generator"] = OllamaGenerator()
+
+    warming = asyncio.create_task(warm_up())
     yield
+    warming.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await warming
 
 
 app = FastAPI(title="AI Support Desk — advisory service", lifespan=lifespan)
@@ -177,6 +217,7 @@ async def turn(request: TurnRequest) -> StreamingResponse:
                 "turn_timing",
                 correlation_id=(request.correlation_id or "")[:64] or None,
                 kind=turn_kind(plan),
+                context=plan.context,
                 completed=completed,
                 plan_ms=clock.ms("planned"),
                 first_token_ms=clock.ms("first_token"),
@@ -192,7 +233,7 @@ async def turn(request: TurnRequest) -> StreamingResponse:
 
 
 @app.post("/ingest", dependencies=[Depends(require_service_token)])
-def ingest() -> dict:
+def ingest(background: BackgroundTasks) -> dict:
     """Re-indexes the help centre. Idempotent by construction.
 
     Chunk ids are deterministic (`{document_id}:{index}`), so re-ingesting
@@ -215,6 +256,9 @@ def ingest() -> dict:
 
     embeddings = state["embedder"].embed_documents([chunk.text for chunk in chunks])
     state["store"].upsert(settings.collection, chunks, embeddings)
+    # The help centre every answer's prompt starts with may have changed, so
+    # the model reads the new one now rather than on a customer's turn.
+    background.add_task(warm_up)
 
     return {
         "documents": len({chunk.document_id for chunk in chunks}),

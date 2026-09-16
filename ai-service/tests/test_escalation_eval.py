@@ -14,7 +14,7 @@ from __future__ import annotations
 import inspect
 import json
 
-from app.config import Settings
+from app.config import Settings, settings
 from app.pipeline.intent import detect_action_request
 from app.pipeline.retrieval import retrieve
 from evaluation import tuning
@@ -223,6 +223,19 @@ def test_the_harness_runs_every_turn_through_plan_turn_against_the_real_help_cen
     summary = summarise([to_record(r) for r in results])
     assert summary["false_proposal_rate"] == 0.0
     assert summary["_counts"]["turns"] == len(DATASET)
+
+
+def test_the_top_document_is_the_best_scoring_one_whatever_order_citations_are_in(monkeypatch):
+    # Answer citations follow help-centre order (ADR 0011); the eval's "expected
+    # article retrieved first" must not read that order as a ranking.
+    monkeypatch.setattr(settings, "score_threshold", 0.0)
+    embedder, store = BagOfWordsEmbedder(), InMemoryVectorStore()
+    index_kb(embedder, store)
+    [result] = run_turns([turn("ans-return-window")], embedder, store)
+
+    best = retrieve(query=turn("ans-return-window").message, collection=settings.collection,
+                    embedder=embedder, store=store, top_k=1, score_threshold=0.0).chunks[0]
+    assert result.top_document == best.document_id
 
 
 def test_replaying_a_turn_at_another_threshold_changes_only_its_grounding():

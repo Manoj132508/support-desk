@@ -80,6 +80,26 @@ class OllamaGenerator:
         # A seam for tests. In production httpx chooses its own transport.
         self._transport = transport
 
+    async def prime(self, system: str, messages: list[dict]) -> dict:
+        """Loads the model and reads a prompt, generating one token. Phase 14.
+
+        Called at startup with the start every answer's prompt shares, so the
+        first customer does not wait for the model to load (16 s on the
+        development machine) or for that start to be read (a further 20 s).
+        Returns Ollama's metrics for the log.
+        """
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}, *messages],
+            "stream": False,
+            "keep_alive": settings.keep_alive,
+            "options": {**ollama_options(), "num_predict": 1},
+        }
+        async with httpx.AsyncClient(timeout=settings.request_timeout_s, transport=self._transport) as client:
+            response = await client.post(f"{self.base_url}/api/chat", json=payload)
+            response.raise_for_status()
+            return ollama_metrics(response.json())
+
     async def stream(
         self, system: str, messages: list[dict], on_metrics: MetricsCallback | None = None
     ) -> AsyncIterator[str]:
@@ -87,6 +107,10 @@ class OllamaGenerator:
             "model": self.model,
             "messages": [{"role": "system", "content": system}, *messages],
             "stream": True,
+            # Sent with every request, because Ollama applies the most recent
+            # request's value: one without it would reset the model to unload
+            # after Ollama's default five minutes.
+            "keep_alive": settings.keep_alive,
             "options": ollama_options(),
         }
 

@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # Phase 13 doc.
     top_k: int = 5
     score_threshold: float = 0.51
+    # While the help centre has at most this many chunks, an answer's prompt
+    # holds ALL of them in a fixed order, so every prompt starts identically and
+    # the model reuses its reading of that start (ADR 0011). 10 chunks of at
+    # most 800 characters stays near 2,000 tokens. Above it, the prompt is the
+    # retrieved chunks by score, as before.
+    full_context_max_chunks: int = 10
     chunk_size: int = 800
     chunk_overlap: int = 150
 
@@ -58,6 +64,11 @@ class Settings(BaseSettings):
     # the development machine's GPU faults under load (Phase 1 §8), so its
     # Phase 14 measurements were taken with AI_NUM_GPU=0.
     num_gpu: int | None = None
+    # How long Ollama keeps the model loaded after a request. Its default is 5
+    # minutes; after that the next customer waits for the model to load again
+    # (16 s on the development machine) and for its prompt cache to be rebuilt.
+    # The cost is the model's memory, held for this long after the last turn.
+    keep_alive: str = "30m"
 
     # A shared secret between Express and this service, read from the same
     # AI_SERVICE_TOKEN variable the API sends. Not a user credential: it exists

@@ -53,7 +53,10 @@ def run_turns(cases: list[EvalTurn], embedder, store) -> list[TurnResult]:
                 grounded=plan.grounded,
                 should_escalate=plan.should_escalate,
                 detected_action=plan.action.kind if plan.action is not None else None,
-                top_document=plan.citations[0].document_id if plan.citations else None,
+                # The highest-scoring citation, not the first: an answer's
+                # citations follow the order the model saw its sources, which
+                # for a small help centre is help-centre order (ADR 0011).
+                top_document=max(plan.citations, key=lambda c: c.score).document_id if plan.citations else None,
             )
         )
     return results
