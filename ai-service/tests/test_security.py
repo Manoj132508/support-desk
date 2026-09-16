@@ -87,4 +87,7 @@ def test_ingest_reads_only_the_configured_help_centre_whatever_the_request_names
     response = client.post("/ingest", json={"path": "C:/Windows/System32"})
 
     assert response.status_code == 200
-    assert seen == [Path(main.settings.kb_path)]
+    # Every read, including the startup indexing of an empty index (Phase 15),
+    # is of the configured directory and nothing else.
+    assert seen
+    assert set(seen) == {Path(main.settings.kb_path)}

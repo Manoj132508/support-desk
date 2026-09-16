@@ -88,11 +88,11 @@ async def lifespan(app: FastAPI):
     if state["generator"] is None:
         state["generator"] = OllamaGenerator()
 
-    warming = asyncio.create_task(warm_up())
+    preparing = asyncio.create_task(prepare())
     yield
-    warming.cancel()
+    preparing.cancel()
     with contextlib.suppress(asyncio.CancelledError):
-        await warming
+        await preparing
 
 
 app = FastAPI(title="AI Support Desk — advisory service", lifespan=lifespan)
@@ -247,23 +247,52 @@ def ingest(background: BackgroundTasks) -> dict:
     quote it to customers. The directory is a deployment setting, not a request
     parameter.
     """
-    directory = Path(settings.kb_path)
+    result = index_help_centre()
+    if result["chunks"]:
+        # The help centre every answer's prompt starts with may have changed,
+        # so the model reads the new one now rather than on a customer's turn.
+        background.add_task(warm_up)
+    return result
+
+
+def index_help_centre() -> dict:
+    """Embeds the configured help centre into the index. The body of /ingest."""
     chunks = load_kb(
-        directory, chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap
+        Path(settings.kb_path), chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap
     )
     if not chunks:
         return {"documents": 0, "chunks": 0}
 
     embeddings = state["embedder"].embed_documents([chunk.text for chunk in chunks])
     state["store"].upsert(settings.collection, chunks, embeddings)
-    # The help centre every answer's prompt starts with may have changed, so
-    # the model reads the new one now rather than on a customer's turn.
-    background.add_task(warm_up)
-
     return {
         "documents": len({chunk.document_id for chunk in chunks}),
         "chunks": len(chunks),
     }
+
+
+async def prepare() -> None:
+    """Startup work that must not delay answering. Phase 15.
+
+    A new deployment's index is empty. Until Phase 15 it stayed empty until
+    someone called /ingest by hand, and every question meanwhile scored nothing
+    and was offered a person. The help centre ships with the service, so an
+    empty index is filled from it; one that already has chunks is left alone,
+    and /ingest remains the way to re-index. Then the warm-up (Phase 14), which
+    needs the chunks to prime the model with.
+
+    While this runs the service answers health checks and turns; a question
+    asked before indexing finishes is not grounded, and is offered a person.
+    """
+    try:
+        if await run_in_threadpool(state["store"].count, settings.collection) == 0:
+            clock = TurnClock()
+            result = await run_in_threadpool(index_help_centre)
+            clock.mark("finished")
+            log_event("startup_ingest", indexed_ms=clock.ms("finished"), **result)
+    except Exception as error:  # noqa: BLE001 - never stop the service; /ingest can retry
+        log_event("startup_ingest", outcome="failed", error=type(error).__name__)
+    await warm_up()
 
 
 def turn_kind(plan: TurnPlan) -> str:

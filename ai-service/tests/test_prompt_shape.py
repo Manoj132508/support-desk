@@ -233,6 +233,62 @@ def test_a_failed_warm_up_is_logged_and_never_raised(capsys):
     assert line["error"] == "ConnectError"
 
 
+def test_an_empty_index_is_filled_from_the_bundled_help_centre_at_startup(capsys, monkeypatch):
+    # Phase 15: a new deployment's index is empty, and used to stay empty until
+    # someone called /ingest, offering a person for every question meanwhile.
+    embedder, store = BagOfWordsEmbedder(), InMemoryVectorStore()
+    primer = RecordingPrimer()
+    previous = dict(main.state)
+    main.state.update({"embedder": embedder, "store": store, "generator": primer})
+    monkeypatch.setattr(settings, "kb_path", str(KB))
+    try:
+        asyncio.run(main.prepare())
+    finally:
+        main.state.clear()
+        main.state.update(previous)
+
+    assert store.count(settings.collection) == len(load_kb(KB))
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    assert [line["event"] for line in lines] == ["startup_ingest", "warm_up"], "index first, then warm up with it"
+    assert primer.primed and "Sources:" in primer.primed[-1]
+
+
+def test_an_index_that_already_has_chunks_is_left_alone_at_startup(capsys, monkeypatch):
+    embedder, store, chunks = loaded()
+    upserts = []
+    original = store.upsert
+    monkeypatch.setattr(store, "upsert", lambda *args: upserts.append(args) or original(*args))
+    previous = dict(main.state)
+    main.state.update({"embedder": embedder, "store": store, "generator": RecordingPrimer()})
+    try:
+        asyncio.run(main.prepare())
+    finally:
+        main.state.clear()
+        main.state.update(previous)
+
+    assert upserts == []
+    assert store.count(settings.collection) == len(chunks)
+    assert "startup_ingest" not in capsys.readouterr().out
+
+
+def test_a_failed_startup_ingest_is_logged_and_the_service_still_warms_up(capsys):
+    class BrokenStore(InMemoryVectorStore):
+        def count(self, collection):
+            raise ConnectionError("index directory unreadable")
+
+    previous = dict(main.state)
+    main.state.update({"embedder": BagOfWordsEmbedder(), "store": BrokenStore(), "generator": ScriptedGenerator([])})
+    try:
+        asyncio.run(main.prepare())
+    finally:
+        main.state.clear()
+        main.state.update(previous)
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    assert lines[0] == {"level": "info", "event": "startup_ingest", "outcome": "failed", "error": "ConnectionError"}
+    assert lines[-1]["event"] == "warm_up"
+
+
 def test_reindexing_the_help_centre_warms_the_model_again(capsys, monkeypatch):
     embedder, store = BagOfWordsEmbedder(), InMemoryVectorStore()
     primer = RecordingPrimer()
