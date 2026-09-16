@@ -88,9 +88,17 @@ function sanitiseEvidence(data) {
  * AT MOST ONE PROPOSAL PER TURN. ADR 0009 property 7: one proposal, one dialog.
  * A second `proposal_request` in the same turn is dropped rather than stacking
  * confirmations in front of the customer.
+ *
+ * `onWrite(event)` is called after each frame is written to the customer, for
+ * turn timing. It sees only the event name, so it cannot log content.
  */
-export async function relayFrames(upstream, sink, { onDropped, onProposalRequest } = {}) {
+export async function relayFrames(upstream, sink, { onDropped, onProposalRequest, onWrite } = {}) {
   const seen = { tokens: [], evidence: [], done: null, dropped: [], intercepted: 0 };
+
+  const write = (event, data) => {
+    sink.write(sseFrame(event, data));
+    onWrite?.(event);
+  };
 
   const drop = (frame) => {
     seen.dropped.push(frame.event);
@@ -113,7 +121,7 @@ export async function relayFrames(upstream, sink, { onDropped, onProposalRequest
           // validated proposal or a policy notice into the customer's stream.
           throw new Error(`An interception handler may not emit "${out?.event}"`);
         }
-        sink.write(sseFrame(out.event, out.data));
+        write(out.event, out.data);
       }
       continue;
     }
@@ -126,18 +134,18 @@ export async function relayFrames(upstream, sink, { onDropped, onProposalRequest
     if (frame.event === 'evidence') {
       const clean = sanitiseEvidence(frame.data);
       seen.evidence.push(clean);
-      sink.write(sseFrame('evidence', clean));
+      write('evidence', clean);
       continue;
     }
 
     if (frame.event === 'token') {
       seen.tokens.push(frame.data);
-      sink.write(sseFrame('token', frame.data));
+      write('token', frame.data);
       continue;
     }
 
     seen.done = frame.data;
-    sink.write(sseFrame('done', frame.data));
+    write('done', frame.data);
   }
 
   return seen;

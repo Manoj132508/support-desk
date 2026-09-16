@@ -5,6 +5,7 @@ import { Conversation, Message } from '../db/models/index.js';
 import { streamTurn } from '../services/aiClient.js';
 import { HISTORY_READ_LIMIT, turnHistory } from '../services/turnPayload.js';
 import { openSseStream, relayFrames, sseFrame } from '../services/sse.js';
+import { makeTurnTimer } from '../services/turnTiming.js';
 import { makeActionService } from '../policy/actionService.js';
 import { makeMongoActionRepo } from '../policy/mongoActionRepo.js';
 import { framesForProposalResult } from '../policy/proposalFrames.js';
@@ -103,6 +104,7 @@ conversationsRouter.post(
   // Each message costs a call to the AI service (Phase 12, OWASP API4).
   messageLimiter,
   handle(async (req, res) => {
+    const timer = makeTurnTimer({ startedAt: req.receivedAt });
     const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
     if (!content) throw AppError.malformed('A message needs content');
     if (content.length > 4000) throw AppError.malformed('Message is too long');
@@ -126,6 +128,7 @@ conversationsRouter.post(
       .sort({ createdAt: -1 })
       .limit(HISTORY_READ_LIMIT);
     const history = turnHistory(recent, { exclude: question._id });
+    timer.mark('persisted');
 
     const controller = new AbortController();
     let cancelled = false;
@@ -156,6 +159,17 @@ conversationsRouter.post(
         : undefined;
 
     openSseStream(res);
+    timer.mark('streamOpened');
+
+    // NFR-1. One line per turn, ids and durations only: never the question,
+    // which NFR-4 keeps out of anything that is not the conversation itself.
+    const logTiming = (fields) =>
+      jsonLog('turn_timing', {
+        correlationId: req.correlationId,
+        role: req.user.role,
+        ...fields,
+        ...timer.summary(),
+      });
 
     let seen;
     try {
@@ -165,9 +179,14 @@ conversationsRouter.post(
           history,
           correlationId: req.correlationId,
           signal: controller.signal,
+          onResponse: () => timer.mark('upstreamResponded'),
         }),
         res,
         {
+          onWrite: (event) => {
+            timer.mark('firstFrame');
+            if (event === 'token') timer.mark('firstToken');
+          },
           onProposalRequest,
           onDropped: (frame) =>
             console.warn(
@@ -189,6 +208,8 @@ conversationsRouter.post(
       // Headers are already sent, so this cannot be a status code.
       res.write(sseFrame('error', { kind: 'fault', message: 'The assistant is unavailable' }));
       res.end();
+      timer.mark('finished');
+      logTiming({ outcome: 'fault' });
       console.error(
         JSON.stringify({
           level: 'error',
@@ -210,5 +231,12 @@ conversationsRouter.post(
     });
 
     if (!cancelled) res.end();
+    timer.mark('finished');
+    logTiming({
+      outcome: cancelled ? 'cancelled' : 'complete',
+      action: seen.done?.action ?? null,
+      grounded: seen.done?.grounded ?? null,
+      tokenFrames: seen.tokens.length,
+    });
   }),
 );

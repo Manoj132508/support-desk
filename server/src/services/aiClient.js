@@ -66,7 +66,7 @@ export function parseFrames(buffer) {
  * the browser listening -- the model would run to completion and the cost would
  * still be paid.
  */
-export async function* streamTurn({ question, history = [], correlationId, signal }) {
+export async function* streamTurn({ question, history = [], correlationId, signal, onResponse }) {
   if (!config.aiServiceUrl) {
     throw AppError.fault('AI service is not configured');
   }
@@ -96,6 +96,9 @@ export async function* streamTurn({ question, history = [], correlationId, signa
   if (!response.ok || !response.body) {
     throw AppError.fault(`AI service returned ${response.status}`);
   }
+  // For turn timing: the AI service has decided what this turn is and begun
+  // its stream.
+  onResponse?.();
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

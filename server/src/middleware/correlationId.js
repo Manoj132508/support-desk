@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 
 const HEADER = 'x-correlation-id';
 
@@ -28,6 +29,10 @@ export function correlationId(req, res, next) {
       : randomUUID();
 
   req.correlationId = safe;
+  // Also the request's arrival time, because this is the first middleware.
+  // Latency measured from here includes authentication and rate limiting, as a
+  // customer's wait does (services/turnTiming.js).
+  req.receivedAt = performance.now();
   res.set('X-Correlation-Id', safe);
   next();
 }
