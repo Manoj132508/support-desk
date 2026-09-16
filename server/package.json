@@ -13,6 +13,7 @@
     "sweep": "node --env-file-if-exists=.env scripts/sweep.js",
     "eval:policy": "node eval/policy/run.js",
     "perf:policy": "node perf/policyLatency.js",
+    "perf:ttft": "node perf/ttft.js",
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
