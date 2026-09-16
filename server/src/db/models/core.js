@@ -218,9 +218,13 @@ const ticketSchema = new Schema(
   },
   { timestamps: true },
 );
-ticketSchema.index({ tenantId: 1, currentStatus: 1, openedAt: 1 });
+// The queue sorts on (openedAt, _id), _id breaking ties for its keyset cursor,
+// so both queue indexes end in both fields. Ending at openedAt, the planner
+// still chose them and then sorted every matching ticket in memory (Phase 14,
+// perf/queryPlans.js). One status, oldest first:
+ticketSchema.index({ tenantId: 1, currentStatus: 1, openedAt: 1, _id: 1 });
 // The default queue: every ticket still being worked, oldest first.
-ticketSchema.index({ tenantId: 1, active: 1, openedAt: 1 });
+ticketSchema.index({ tenantId: 1, active: 1, openedAt: 1, _id: 1 });
 ticketSchema.index(
   { tenantId: 1, conversationId: 1 },
   { unique: true, partialFilterExpression: { active: true } },

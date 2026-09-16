@@ -22,7 +22,20 @@ test('FR-8.3, ADR 0010: a conversation has at most one active ticket, by partial
 });
 
 test('the default queue has its own index: active tickets, oldest first', () => {
-  assert.ok(indexOn(Ticket, { tenantId: 1, active: 1, openedAt: 1 }));
+  assert.ok(indexOn(Ticket, { tenantId: 1, active: 1, openedAt: 1, _id: 1 }));
+});
+
+test('Phase 14: both queue indexes end in the queue’s full sort, so no page is sorted in memory', () => {
+  // The queue sorts on (openedAt, _id) -- _id breaks ties for the keyset cursor.
+  // Indexes ending at openedAt were chosen by the planner and still left a sort
+  // in memory over every matching ticket, found by explaining the query against
+  // a real server (perf/queryPlans.js).
+  for (const filterField of ['active', 'currentStatus']) {
+    assert.ok(
+      indexOn(Ticket, { tenantId: 1, [filterField]: 1, openedAt: 1, _id: 1 }),
+      `no (tenantId, ${filterField}, openedAt, _id) index`,
+    );
+  }
 });
 
 test('a new ticket is open, active, and has counted no events yet', () => {
