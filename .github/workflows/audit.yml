@@ -1,0 +1,67 @@
+name: Dependency audit
+
+# Known vulnerabilities in the dependencies that SHIP. Phase 15; the Python half
+# was deferred from Phase 12, where pip-audit was not available.
+#
+# Weekly and on demand, not on every push: an advisory published tomorrow would
+# otherwise fail an unrelated change today. Also on a push to main that changes
+# a dependency file, so a new dependency is audited when it arrives.
+#
+# The npm threshold is `high`. Phase 12 recorded two moderate react-router
+# advisories in the client -- one mitigated in code, the other in server-side
+# rendering, which this app does not use -- with the upgrade that fixes them
+# deferred. Failing on them every week would teach everyone to ignore this job.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Mondays 07:00 UTC, an hour after the escalation eval
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'client/package-lock.json'
+      - 'server/package-lock.json'
+      - 'ai-service/requirements.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    name: npm — ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [client, server]
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  python:
+    name: pip — ai-service
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The environment the image builds, including torch and everything the
+      # requirements pull in -- most of what runs is a transitive dependency.
+      - name: Install what the image installs
+        run: |
+          pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pip-audit
+      - name: Audit the installed environment
+        run: pip-audit --progress-spinner off
