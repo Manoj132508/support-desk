@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { config, productionConfigProblems } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './db/connect.js';
+import { indexDrift, missingIndexProblems } from './db/indexes.js';
 import { makeShutdown } from './shutdown.js';
 
 /**
@@ -36,6 +37,30 @@ try {
     JSON.stringify({ level: 'error', message: 'Database startup failed', error: error.message }),
   );
   process.exit(1);
+}
+
+/**
+ * In production, the declared indexes must already exist (Phase 15). Some are
+ * guarantees -- the unique idempotency key is what stops a confirmation
+ * executing twice -- and production does not build them automatically, because
+ * a failed automatic build is silent (db/indexes.js). Extra indexes only warn.
+ */
+if (config.isProduction) {
+  const drift = await indexDrift();
+  const missing = missingIndexProblems(drift);
+  if (missing.length > 0) {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        message: 'Refusing to start: declared indexes are missing. Run `npm run indexes -- --apply` first.',
+        problems: missing,
+      }),
+    );
+    process.exit(1);
+  }
+  for (const entry of drift.filter((item) => item.extra.length > 0)) {
+    console.warn(JSON.stringify({ level: 'warn', message: 'Indexes the models no longer declare', ...entry }));
+  }
 }
 
 const app = createApp();

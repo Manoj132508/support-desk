@@ -30,6 +30,24 @@ export function databaseState() {
   return mongoose.connection.readyState === 1 ? 'ok' : state;
 }
 
+export function connectionOptions(value = config) {
+  return {
+    // Fail fast rather than hanging a request for 30 seconds. A request that
+    // cannot reach the database should return a fault promptly so the UI can
+    // say so, not sit there looking like a slow response.
+    serverSelectionTimeoutMS: 5000,
+    // Every write must reach a majority before it is acknowledged. For a
+    // system whose central claim is that its audit trail is trustworthy, an
+    // acknowledged write that a failover could lose is not acceptable.
+    writeConcern: { w: 'majority' },
+    // Never in production: a failed automatic build is silent, and some of
+    // these indexes are guarantees. Production applies them as a deploy step
+    // and refuses to start without them (db/indexes.js). Development keeps the
+    // convenience.
+    autoIndex: !value.isProduction,
+  };
+}
+
 export async function connectDatabase() {
   if (!config.mongodbUri) {
     // Not an error. Phases 1-6 run without a database, and the honest report
@@ -50,16 +68,7 @@ export async function connectDatabase() {
     state = 'unreachable';
   });
 
-  await mongoose.connect(config.mongodbUri, {
-    // Fail fast rather than hanging a request for 30 seconds. A request that
-    // cannot reach the database should return a fault promptly so the UI can
-    // say so, not sit there looking like a slow response.
-    serverSelectionTimeoutMS: 5000,
-    // Every write must reach a majority before it is acknowledged. For a
-    // system whose central claim is that its audit trail is trustworthy, an
-    // acknowledged write that a failover could lose is not acceptable.
-    writeConcern: { w: 'majority' },
-  });
+  await mongoose.connect(config.mongodbUri, connectionOptions(config));
 
   await assertTransactionsAvailable();
   return mongoose.connection;
