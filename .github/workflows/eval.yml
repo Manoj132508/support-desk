@@ -32,10 +32,11 @@ jobs:
           cache: pip
           cache-dependency-path: ai-service/requirements.txt
       # CPU wheels: this job has no GPU, and the CUDA build of torch is several
-      # gigabytes that would never be used.
+      # gigabytes that would never be used. Pinned to the version the baseline
+      # was measured with, which the AI image also pins (Phase 15).
       - name: Install
         run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
       - name: Run the eval and check for drift
         run: python -m evaluation.run --check

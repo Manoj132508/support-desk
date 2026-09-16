@@ -1,0 +1,74 @@
+name: Deploy check
+
+# Builds all three images and runs the whole compose stack, then checks it from
+# outside the way a browser meets it. Phase 15.
+#
+# Docker is not installed on the machine this project was built on (Phase 1 §8),
+# so this workflow is where the deployment is actually built and started. It is
+# separate from ci.yml because the AI image installs torch and bakes in the
+# embedding model -- minutes of work the per-change test jobs do not need.
+#
+# No Ollama here: the AI service starts, answers health, and logs a failed model
+# warm-up, which is the degraded mode the desk is designed to run in.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: Build, start and smoke-test the stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Generated for this run and thrown away with the runner. Compose refuses
+      # to start without them, and each service refuses weak ones in production.
+      - name: Secrets for this run only
+        run: |
+          {
+            echo "JWT_SECRET=$(openssl rand -hex 32)"
+            echo "AI_SERVICE_TOKEN=$(openssl rand -hex 32)"
+          } > .env
+
+      - name: The compose file keeps its decisions
+        run: docker compose config --format json | node deploy/check-compose.mjs
+
+      - name: Build the images
+        run: docker compose build
+
+      - name: Start the stack
+        run: docker compose up --detach
+
+      - name: Smoke test through nginx
+        run: node deploy/smoke.mjs http://localhost:5179
+
+      - name: Indexes match the models
+        run: docker compose run --rm indexes node scripts/indexes.js
+
+      - name: Initiating the replica set again changes nothing
+        run: docker compose run --rm mongo-init | tee /dev/stderr | grep -q "already initiated"
+
+      - name: The API shuts down cleanly on SIGTERM
+        run: |
+          docker compose stop api
+          docker compose logs api | grep -q "Shut down cleanly"
+
+      - name: Logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes
