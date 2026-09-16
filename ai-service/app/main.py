@@ -21,7 +21,8 @@ from pydantic import BaseModel, Field
 from app.config import settings, startup_problems
 from app.pipeline.generator import OllamaGenerator
 from app.pipeline.loader import load_kb
-from app.service import plan_turn, stream_answer
+from app.service import TurnPlan, plan_turn, stream_answer
+from app.timing import TurnClock, log_event
 
 state: dict = {"embedder": None, "store": None, "generator": None}
 
@@ -121,47 +122,67 @@ async def turn(request: TurnRequest) -> StreamingResponse:
 
     `evidence` frames carry references, never snippets (ADR 0006 amendment).
     """
+    clock = TurnClock()
     plan = plan_turn(
         question=request.question,
         history=request.history,
         embedder=state["embedder"],
         store=state["store"],
     )
+    clock.mark("planned")
+    model_metrics: dict = {}
 
     async def frames() -> AsyncIterator[str]:
-        # On an action turn the citations are attached to the proposal as
-        # evidence, not shown as footnotes: the assistant's words on that turn
-        # are static and carry no [n] markers to hang them on.
-        if plan.action is None:
-            for citation in plan.citations:
-                yield sse(
-                    "evidence",
-                    {
-                        "kind": "kb_chunk",
-                        "ref": citation.chunk_id,
-                        "n": citation.n,
-                        "documentName": citation.document_name,
-                        "section": citation.section,
-                        "score": round(citation.score, 4),
-                    },
-                )
+        completed = False
+        try:
+            # On an action turn the citations are attached to the proposal as
+            # evidence, not shown as footnotes: the assistant's words on that
+            # turn are static and carry no [n] markers to hang them on.
+            if plan.action is None:
+                for citation in plan.citations:
+                    yield sse(
+                        "evidence",
+                        {
+                            "kind": "kb_chunk",
+                            "ref": citation.chunk_id,
+                            "n": citation.n,
+                            "documentName": citation.document_name,
+                            "section": citation.section,
+                            "score": round(citation.score, 4),
+                        },
+                    )
 
-        async for token in stream_answer(plan, state["generator"]):
-            yield sse("token", token)
+            async for token in stream_answer(plan, state["generator"], on_metrics=model_metrics.update):
+                clock.mark("first_token")
+                yield sse("token", token)
 
-        if plan.action is not None and plan.action.proposal is not None:
-            # A REQUEST, under its own event name. See the docstring above.
-            yield sse("proposal_request", plan.action.proposal)
+            if plan.action is not None and plan.action.proposal is not None:
+                # A REQUEST, under its own event name. See the docstring above.
+                yield sse("proposal_request", plan.action.proposal)
 
-        yield sse(
-            "done",
-            {
-                "grounded": plan.grounded,
-                "shouldEscalate": plan.should_escalate,
-                "topScore": plan.top_score,
-                "action": plan.action.kind if plan.action is not None else None,
-            },
-        )
+            yield sse(
+                "done",
+                {
+                    "grounded": plan.grounded,
+                    "shouldEscalate": plan.should_escalate,
+                    "topScore": plan.top_score,
+                    "action": plan.action.kind if plan.action is not None else None,
+                },
+            )
+            completed = True
+        finally:
+            # In `finally`, so a turn the customer stopped is still measured.
+            clock.mark("finished")
+            log_event(
+                "turn_timing",
+                correlation_id=(request.correlation_id or "")[:64] or None,
+                kind=turn_kind(plan),
+                completed=completed,
+                plan_ms=clock.ms("planned"),
+                first_token_ms=clock.ms("first_token"),
+                finished_ms=clock.ms("finished"),
+                model=model_metrics or None,
+            )
 
     return StreamingResponse(
         frames(),
@@ -199,6 +220,13 @@ def ingest() -> dict:
         "documents": len({chunk.document_id for chunk in chunks}),
         "chunks": len(chunks),
     }
+
+
+def turn_kind(plan: TurnPlan) -> str:
+    """What the customer experienced, in the escalation eval's vocabulary."""
+    if plan.action is not None:
+        return plan.action.kind
+    return "answered" if plan.grounded else "offered_person"
 
 
 def sse(event: str, data) -> str:

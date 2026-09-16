@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from app.config import settings
-from app.pipeline.generator import Generator
+from app.pipeline.generator import Generator, MetricsCallback
 from app.pipeline.intent import (
     ASK_FOR_ORDER_NUMBER,
     CHECKING_ORDER,
@@ -174,8 +174,14 @@ def plan_turn(
     )
 
 
-async def stream_answer(plan: TurnPlan, generator: Generator) -> AsyncIterator[str]:
-    """Yields the answer, the refusal, or the action turn's static text."""
+async def stream_answer(
+    plan: TurnPlan, generator: Generator, on_metrics: MetricsCallback | None = None
+) -> AsyncIterator[str]:
+    """Yields the answer, the refusal, or the action turn's static text.
+
+    `on_metrics` receives the model's own timing when, and only when, the model
+    was called.
+    """
     if plan.action is not None:
         yield plan.action.text
         return
@@ -184,5 +190,5 @@ async def stream_answer(plan: TurnPlan, generator: Generator) -> AsyncIterator[s
         yield REFUSAL_TEXT
         return
 
-    async for token in generator.stream(plan.system, plan.messages):
+    async for token in generator.stream(plan.system, plan.messages, on_metrics=on_metrics):
         yield token

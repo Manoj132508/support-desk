@@ -14,7 +14,10 @@ MIN_TOKEN_LENGTH = 32
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AI_", extra="ignore")
+    # `env_ignore_empty`: a variable present but empty means "not set", as it
+    # does when someone copies .env.example without filling everything in.
+    # Without it, `AI_NUM_GPU=` stopped the service at import.
+    model_config = SettingsConfigDict(env_prefix="AI_", extra="ignore", env_ignore_empty=True)
 
     # "production" makes the service refuse to run -- and refuse every call --
     # without a service token. Anything else is development, whose ports are
@@ -50,6 +53,11 @@ class Settings(BaseSettings):
     temperature: float = 0.0
     max_tokens: int = 600
     request_timeout_s: float = 120.0
+    # How many model layers Ollama may put on a GPU. Unset lets Ollama decide,
+    # which is right for a working GPU. 0 keeps the model entirely on the CPU:
+    # the development machine's GPU faults under load (Phase 1 §8), so its
+    # Phase 14 measurements were taken with AI_NUM_GPU=0.
+    num_gpu: int | None = None
 
     # A shared secret between Express and this service, read from the same
     # AI_SERVICE_TOKEN variable the API sends. Not a user credential: it exists
