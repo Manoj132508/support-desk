@@ -29,7 +29,7 @@ const SKIP_DIRECTORIES = new Set([
   'coverage',
   'index',
 ]);
-const TEXT_EXTENSIONS = new Set(['', '.js', '.jsx', '.mjs', '.cjs', '.json', '.py', '.md', '.yml', '.yaml', '.toml', '.txt', '.css', '.html', '.ini', '.cfg', '.example']);
+const TEXT_EXTENSIONS = new Set(['', '.js', '.jsx', '.mjs', '.cjs', '.json', '.py', '.md', '.yml', '.yaml', '.toml', '.txt', '.css', '.html', '.ini', '.cfg', '.conf', '.example']);
 
 const PATTERNS = [
   ['a private key', new RegExp('-----BEGIN [A-Z ]*PRIVATE ' + 'KEY-----')],
@@ -42,7 +42,10 @@ const PATTERNS = [
 /** In an env-style file, a secret setting must be empty. */
 const ENV_SECRET = /^(?:JWT_SECRET|AI_SERVICE_TOKEN|MONGODB_URI)=\S+/m;
 
-const isLocalEnvFile = (name) => name === '.env' || (name.startsWith('.env.') && name !== '.env.example');
+// Committed examples end in `.example` and ARE scanned. The first version of
+// this rule named `.env.example` alone, so `.env.compose.example` (Phase 15)
+// would have been skipped as somebody's private file.
+const isLocalEnvFile = (name) => name === '.env' || (name.startsWith('.env.') && !name.endsWith('.example'));
 
 function* files(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -87,9 +90,19 @@ test('the scan would catch what it is meant to catch', () => {
   assert.equal(ENV_SECRET.test('JWT_SECRET='), false);
 });
 
-test('.env files are ignored by git, and the example is not', () => {
+test('.env files are ignored by git, and the examples are not', () => {
   const ignore = readFileSync(join(ROOT, '.gitignore'), 'utf8').split(/\r?\n/);
   assert.ok(ignore.includes('.env'));
   assert.ok(ignore.includes('.env.*'));
   assert.ok(ignore.includes('!.env.example'));
+  assert.ok(ignore.includes('!.env.compose.example'));
+});
+
+test('both committed env examples, and the deployment files, are among what is scanned', () => {
+  const scanned = new Set([...files(ROOT)].map((path) => relative(ROOT, path).replace(/\\/g, '/')));
+  for (const expected of ['.env.example', '.env.compose.example', 'docker-compose.yml', 'server/Dockerfile', 'client/deploy/nginx.conf']) {
+    assert.ok(scanned.has(expected), `${expected} is not scanned`);
+  }
+  assert.equal(isLocalEnvFile('.env.production'), true);
+  assert.equal(isLocalEnvFile('.env.compose.example'), false);
 });

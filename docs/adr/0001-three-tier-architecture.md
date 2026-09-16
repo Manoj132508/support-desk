@@ -82,3 +82,19 @@ to "just add a small write endpoint here".
 - Deployment config exposes 5179 and 4400 only; 8200 is internal (Phase 15).
 - An integration test asserts the AI service has no credential that permits a write to business
   collections (Phase 10).
+
+## Amendments
+
+**2026-09-16 (Phase 15) — only the client is published; the API port is not.** "Verified by"
+above expected the deployment to expose 5179 and 4400. Building it showed 4400 must stay
+internal. The API trusts exactly one proxy hop when it reads the client address its sign-in
+limiter counts (`TRUST_PROXY_HOPS=1`), and that hop is nginx. Reached directly on 4400, the API
+would believe a caller's own `X-Forwarded-For`, and a caller rotating that header would never be
+limited — `server/test/trustProxy.test.js` shows exactly that. The browser never needed 4400
+anyway: nginx proxies `/api` so the app is one origin, which the SameSite session cookie
+requires.
+
+So the compose deployment publishes the client alone (5179 → nginx). The API, the AI service and
+MongoDB are reachable only on the compose network. `deploy/composeRules.mjs` refuses a compose
+file that publishes any of them, and the CI smoke test checks from outside that the three ports
+refuse connections.

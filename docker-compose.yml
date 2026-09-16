@@ -1,0 +1,135 @@
+# The whole support desk, production-like. Phase 15; see DEPLOYMENT.md.
+#
+#   cp .env.compose.example .env      # then set the two secrets
+#   docker compose up --build
+#   open http://localhost:5179
+#
+# Startup runs in order, each step waiting for the one before:
+#
+#   mongo ─▶ mongo-init ─▶ indexes ─▶ api ─▶ client
+#                                     ai ─┘
+#
+# THREE THINGS THIS FILE EXISTS TO GET RIGHT:
+#
+#  1. MongoDB is a REPLICA SET. Execution commits the order update, the audit
+#     record and the ticket event in one transaction (Phase 3 §9), which a
+#     standalone mongod cannot run -- and the API refuses to start on one.
+#     `mongo-init` initiates the set once, and is a no-op on every later start.
+#
+#  2. Indexes are a DEPLOY STEP. The unique idempotency key is what stops a
+#     confirmation executing twice (ADR 0003). `indexes` applies them before the
+#     API starts, and the API refuses to start in production without them.
+#
+#  3. ONLY THE CLIENT IS PUBLISHED. The API trusts exactly one proxy hop for the
+#     client address the sign-in limiter counts (TRUST_PROXY_HOPS=1): nginx.
+#     Published directly, a caller's forged X-Forwarded-For would be believed.
+#     The AI service and MongoDB are internal as well (ADR 0001).
+#
+# Ollama is NOT a container here: it runs on the host, where the GPU (or, on the
+# development machine, the CPU) is. See DEPLOYMENT.md for reaching it.
+
+name: ai-support-desk
+
+services:
+  mongo:
+    image: mongo:8.0
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  mongo-init:
+    image: mongo:8.0
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # The member is named mongo:27017, the address the API resolves on this
+    # network. A replica set hands clients its members' names, so a member
+    # named localhost would send the API to its own container.
+    command:
+      - mongosh
+      - --host
+      - mongo:27017
+      - --quiet
+      - --eval
+      - |
+        try {
+          rs.status();
+          print('replica set rs0 already initiated');
+        } catch (error) {
+          rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] });
+          print('replica set rs0 initiated');
+        }
+        for (let waited = 0; waited < 60 && !db.hello().isWritablePrimary; waited += 1) sleep(1000);
+        if (!db.hello().isWritablePrimary) {
+          print('no primary after 60 s');
+          quit(1);
+        }
+        print('primary ready');
+
+  indexes:
+    build: ./server
+    restart: "no"
+    command: ["node", "scripts/indexes.js", "--apply"]
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://mongo:27017/ai-support-desk?replicaSet=rs0
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+
+  ai:
+    build: ./ai-service
+    restart: unless-stopped
+    environment:
+      AI_ENVIRONMENT: production
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?set AI_SERVICE_TOKEN in .env (at least 32 characters)}
+      AI_OLLAMA_BASE_URL: ${AI_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      AI_MODEL: ${AI_MODEL:-llama3.1:8b}
+      AI_NUM_GPU: ${AI_NUM_GPU:-}
+    extra_hosts:
+      # Lets the container reach Ollama on the host under Linux, as Docker
+      # Desktop already does on Windows and macOS.
+      - "host.docker.internal:host-gateway"
+
+  api:
+    build: ./server
+    restart: unless-stopped
+    # tini as PID 1, so SIGTERM reaches Node and the API shuts down cleanly.
+    init: true
+    # Longer than the API's own 10 s grace for open streams (src/shutdown.js).
+    stop_grace_period: 15s
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: "4400"
+      MONGODB_URI: mongodb://mongo:27017/ai-support-desk?replicaSet=rs0
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (at least 32 characters)}
+      AI_SERVICE_URL: http://ai:8200
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?set AI_SERVICE_TOKEN in .env (at least 32 characters)}
+      TRUST_PROXY_HOPS: "1"
+    depends_on:
+      indexes:
+        condition: service_completed_successfully
+      # Started, not healthy: with the AI service down the desk still serves
+      # people (FR-14.3), so it must not hold the API back.
+      ai:
+        condition: service_started
+
+  client:
+    build: ./client
+    restart: unless-stopped
+    ports:
+      - "${CLIENT_PORT:-5179}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  mongo_data:
