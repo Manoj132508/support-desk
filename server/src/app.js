@@ -28,11 +28,13 @@ import { apiRouter } from './routes/index.js';
 export function createApp() {
   const app = express();
 
-  // Behind the Vite dev proxy in development and a reverse proxy in
-  // production, so the client IP the rate limiter keys on comes from
-  // X-Forwarded-For. Set to 1 rather than `true`: trusting every hop lets a
-  // caller spoof the header and walk around the limiter.
-  app.set('trust proxy', 1);
+  // Behind the Vite dev proxy in development and nginx in the compose
+  // deployment, so the client IP the rate limiter keys on comes from
+  // X-Forwarded-For. A count of hops rather than `true`: trusting every hop
+  // lets a caller spoof the header and walk around the limiter. Configurable
+  // since Phase 15, because the right count is a property of the deployment
+  // (config/env.js, test/trustProxy.test.js).
+  app.set('trust proxy', config.trustProxyHops);
   app.disable('x-powered-by');
 
   app.use(correlationId);

@@ -8,8 +8,27 @@
  * Nothing here has a secret default. A missing JWT_SECRET must fail loudly in
  * Phase 8, never fall back to a development value that could reach production.
  */
+/**
+ * How many proxies stand in front of the API, from TRUST_PROXY_HOPS. Phase 15.
+ *
+ * The sign-in limiter counts attempts per client address, and behind a proxy
+ * that address comes from X-Forwarded-For. Express believes that header for
+ * exactly this many hops. One is right behind a single proxy: the Vite dev
+ * server, or nginx in the compose deployment. Behind a load balancer AND nginx
+ * it is 2, or every customer shares the balancer's address and one bucket.
+ * Directly exposed it must be 0, or a caller's forged header is believed.
+ */
+export function parseTrustProxyHops(value) {
+  if (value === undefined || value === '') return 1;
+  if (!/^\d+$/.test(value)) {
+    throw new Error('TRUST_PROXY_HOPS must be a whole number of proxies in front of the API');
+  }
+  return Number(value);
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 4400),
+  trustProxyHops: parseTrustProxyHops(process.env.TRUST_PROXY_HOPS),
   nodeEnv: process.env.NODE_ENV ?? 'development',
   isProduction: process.env.NODE_ENV === 'production',
 
