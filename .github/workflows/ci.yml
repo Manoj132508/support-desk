@@ -18,9 +18,9 @@ jobs:
         working-directory: client
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
@@ -32,8 +32,10 @@ jobs:
       - name: Install
         run: npm ci
 
+      # The github-actions reporter also writes each failure as an annotation:
+      # a job's log needs a signed-in viewer, and annotations do not.
       - name: Test
-        run: npm test
+        run: npx vitest run --reporter=default --reporter=github-actions
 
       - name: Build
         run: npm run build
@@ -46,9 +48,9 @@ jobs:
         working-directory: server
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
@@ -59,8 +61,13 @@ jobs:
 
       # Tests bind to port 0, so nothing here depends on a fixed port being
       # free and the two jobs cannot collide.
+      #
+      # `test:ci` adds a reporter that writes each failure as an annotation
+      # (test/support/githubAnnotations.mjs). This job's first failure, in
+      # Phase 15, could not be read without signing in: logs need a session,
+      # annotations do not. The AI service's conftest.py does the same for pytest.
       - name: Test
-        run: npm test
+        run: npm run test:ci
 
       # INV-A's evidence, on every push (Phase 1 §6). Fails the build if a
       # single golden-set case is decided more permissively than specified, or
@@ -78,9 +85,9 @@ jobs:
         working-directory: ai-service
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip

@@ -15,7 +15,8 @@
     "eval:policy": "node eval/policy/run.js",
     "perf:policy": "node perf/policyLatency.js",
     "perf:ttft": "node perf/ttft.js",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "test:ci": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./test/support/githubAnnotations.mjs --test-reporter-destination=stdout \"test/*.test.js\""
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
