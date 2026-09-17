@@ -1,9 +1,10 @@
 # Phase 15 — Deployment and CI
 
 **Project 3 · AI Support Desk**
-Status: **complete, pending its first CI run.** Delivers NFR-7 (runs via Docker Compose) and NFR-9
-(conventional commits, CI green), plus four items earlier phases deferred here. Nothing Docker has
-run yet; what that leaves unverified is in §8.
+Status: **complete.** Delivers NFR-7 (runs via Docker Compose) and NFR-9 (conventional commits, CI
+green), plus four items earlier phases deferred here. The deployment workflow built and ran the
+stack on its first run; the same push turned CI red for a reason only Node 22 showed, fixed in §10.
+What remains unverified is in §8.
 
 ---
 
@@ -169,12 +170,10 @@ week would teach everyone to ignore the job.
 
 ## 8. Honestly unverified, and deferred
 
-- **Nothing Docker has run.** `deploy.yml` has never run, so the images have never been built,
-  nginx has never loaded its configuration, and `mongo-init`'s script has never executed. The
-  first run will say whether any of it is wrong. This phase is complete in the sense that
-  everything that could be checked here was; the rest waits on that run.
-- **`audit.yml` has never run either,** so its first results are unknown.
-- **Signal handling on Linux** is covered only by the unit tests and the CI step not yet run (§5).
+- **Docker has still never run on this machine.** Everything in §6's deploy workflow ran on
+  GitHub's runners instead, and passed first time (§10).
+- **`audit.yml` has not run yet.** It runs weekly, and no dependency file changed in the pushes so
+  far, so its first results are unknown.
 - **A container reaching Ollama on the host** was not tried. On Linux, Ollama has to listen beyond
   loopback (DEPLOYMENT.md).
 - **A question that needs the model while Ollama is down** was not exercised end to end.
@@ -202,4 +201,57 @@ against the code before its fix and seen to fail:
 - the compose rules, against a copy with the API port published;
 - the startup index behaviour.
 
-**Local checks** are in §5. The CI checks are in §6, and they run on the next push.
+**Local checks** are in §5. The CI checks are in §6; their first results are in §10.
+
+---
+
+## 10. The first run on GitHub
+
+The phase was pushed with Phase 14, at `5ec559b`. Two workflows ran.
+
+**Deploy check: passed first time,** in 1.9 minutes. Every step succeeded:
+
+- the compose rules;
+- building all three images (85 s);
+- starting the stack (22 s, including the replica-set initiation and the index step);
+- every smoke check through nginx;
+- the index check;
+- replica-set initiation rerun as a no-op;
+- the API logging a clean shutdown on SIGTERM.
+
+So the images build, nginx loads its configuration, the `mongo-init` script works, and signal
+handling works on Linux. Those were §8's open items when this document was first written.
+
+**CI: the server tests failed,** and the reason could not be read. GitHub shows job logs only to
+signed-in viewers, and the public API returned nothing but "exit code 1". The same commit passed
+all 582 tests here, including in a fresh clone installed from the lockfile under CI's timezone.
+That left the platform: Linux and Node 22 on CI, against Windows and Node 24 here.
+
+**The cause was a timer that does not keep Node alive.** The health probe's timeout used
+`AbortSignal.timeout()`, whose timer is unref'd. Its test fakes an AI service that never answers,
+so the probe's timer was the only thing pending, and a process can finish with it still waiting:
+
+- run standalone, the probe exited 13 with its promise unsettled;
+- Node 24's test runner here kept the process alive anyway, so the test passed;
+- CI's Node 22 runner evidently did not.
+
+The probe now uses an ordinary timer, cleared when it settles, and works whatever else is running.
+A new test runs it in its own process, where nothing else keeps Node alive. That test fails against
+the old probe here on Node 24, so it does not depend on CI to catch this.
+
+**Failures are now readable without signing in.** Each suite writes its failures as GitHub
+annotations, which anyone can read, through the API as well:
+
+- **server:** a node:test reporter, `test/support/githubAnnotations.mjs`, run by `npm run test:ci`;
+- **client:** Vitest's `github-actions` reporter;
+- **AI service:** a hook in `tests/conftest.py`.
+
+Each was checked against a deliberately failing test. The first version of the pytest hook printed
+its annotation straight after pytest's progress mark, where GitHub would not read it.
+
+**The runners warned that the actions were built for Node 20,** which GitHub has deprecated. All
+four workflows now use the Node 24 versions: `checkout@v5`, `setup-node@v5` and `setup-python@v6`,
+each confirmed to declare `node24` before switching.
+
+**Whether the timer was CI's only failure is not yet known.** The next push will show it, and if
+anything else fails, the annotations will say what.
