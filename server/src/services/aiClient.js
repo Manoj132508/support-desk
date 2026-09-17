@@ -70,6 +70,13 @@ export const AI_HEALTH_TIMEOUT_MS = 1_500;
  * Never throws, and gives up after a short timeout, so a hung advisory tier
  * cannot hang the health check that is meant to report it.
  *
+ * The timeout is an ordinary timer, cleared when the probe settles, not
+ * `AbortSignal.timeout()`. That one's timer is unref'd: it does not keep Node's
+ * event loop alive, so a probe with nothing else pending can find the process
+ * finished before its deadline arrives. Inside a running server something is
+ * always pending; in the Node 22 test runner on CI nothing was, and the probe's
+ * hung-service test failed there while passing on Node 24 locally (Phase 15).
+ *
  *   unconfigured  no AI_SERVICE_URL
  *   ok            answered, with its embedder loaded
  *   starting      answered, still loading
@@ -82,16 +89,20 @@ export async function probeAiService({
   timeoutMs = AI_HEALTH_TIMEOUT_MS,
 } = {}) {
   if (!url) return 'unconfigured';
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(new Error('AI service health check timed out')), timeoutMs);
   try {
     const response = await fetchImpl(`${url.replace(/\/$/, '')}/health`, {
       headers: token ? { 'X-Service-Token': token } : {},
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: controller.signal,
     });
     if (!response.ok) return 'unreachable';
     const body = await response.json();
     return body?.status === 'ok' ? 'ok' : 'starting';
   } catch {
     return 'unreachable';
+  } finally {
+    clearTimeout(deadline);
   }
 }
 

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { withServer, call } from './helpers.js';
 import { probeAiService } from '../src/services/aiClient.js';
 
@@ -24,6 +25,28 @@ test('a hung AI service cannot hang the health check', async () => {
   const started = Date.now();
   assert.equal(await probeAiService({ url: 'http://ai.test', fetchImpl: hangs, timeoutMs: 50 }), 'unreachable');
   assert.ok(Date.now() - started < 1_000);
+});
+
+test('the probe settles on its own deadline even when nothing else keeps Node running', () => {
+  // In a separate process, because a test runner may itself keep the event
+  // loop alive and hide the fault. The first version used AbortSignal.timeout,
+  // whose unref'd timer let this process finish with the probe still pending
+  // (exit 13) -- which is how the test above failed on CI's Node 22 and passed
+  // on Node 24 here.
+  const probe = new URL('../src/services/aiClient.js', import.meta.url).href;
+  const child = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `import { probeAiService } from ${JSON.stringify(probe)};
+       const hangs = (url, { signal }) => new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason)));
+       console.log(await probeAiService({ url: 'http://ai.test', fetchImpl: hangs, timeoutMs: 100 }));`,
+    ],
+    { encoding: 'utf8', timeout: 10_000 },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stdout.trim(), 'unreachable');
 });
 
 test('the probe sends the service token and asks the health path', async () => {
