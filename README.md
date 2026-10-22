@@ -24,7 +24,7 @@ architectural property rather than a hope.
 
 ## Status
 
-**Phase 15 of 17 — deployable.** 867 tests pass across three suites (server 582, client 151, AI
+**Phase 15 of 17 — deployable.** 871 tests pass across three suites (server 586, client 151, AI
 service 134), and CI runs all three on every push, with the policy eval gating unauthorised
 actions at exactly zero. This repository is public from Phase 1 on purpose, so CI runs during the
 build rather than after it. This README is rewritten in Phase 16; until then, the phase documents
@@ -61,8 +61,8 @@ npm --prefix server run dev     # http://localhost:4400
 ```
 
 ```bash
-npm --prefix client test        # 39 tests
-npm --prefix server test        # 105 tests
+npm --prefix client test        # 151 tests in the latest CI run
+npm --prefix server test        # 586 tests in the latest CI run
 ```
 
 ```bash

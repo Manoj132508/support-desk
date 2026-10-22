@@ -15,6 +15,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Keep packaging tooling patched too. It remains installed in the runtime image
+# and therefore belongs in the dependency audit, even though application code
+# never imports it.
+RUN python -m pip install --upgrade "setuptools>=83.0.0"
+
 # torch from the CPU index, pinned to the version the escalation eval and the
 # Phase 14 measurements ran with. The default Linux wheel bundles CUDA libraries
 # -- gigabytes the embedder never uses -- and a different torch could change the
