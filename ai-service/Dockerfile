@@ -26,8 +26,8 @@ RUN python -m pip install --upgrade "setuptools>=83.0.0"
 # embeddings the grounding threshold was tuned on. Installed first, so the
 # requirements below find it already satisfied.
 COPY constraints.txt ./
-RUN pip install -c constraints.txt filelock \\
-    && pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+RUN pip install -c constraints.txt filelock
+RUN pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt ./
 RUN pip install -c constraints.txt -r requirements.txt
