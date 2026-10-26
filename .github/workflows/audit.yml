@@ -65,7 +65,8 @@ jobs:
       # requirements pull in -- most of what runs is a transitive dependency.
       - name: Install what the image installs
         run: |
-          pip install -c constraints.txt torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -c constraints.txt filelock
+          pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
           pip install -c constraints.txt -r requirements.txt
           pip install --upgrade 'setuptools>=83.0.0'
           pip install pip-audit
