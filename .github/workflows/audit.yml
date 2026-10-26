@@ -4,8 +4,9 @@ name: Dependency audit
 # was deferred from Phase 12, where pip-audit was not available.
 #
 # Weekly and on demand, not on every push: an advisory published tomorrow would
-# otherwise fail an unrelated change today. Also on a push to main that changes
-# a dependency file, so a new dependency is audited when it arrives.
+# otherwise fail an unrelated change today. Also on a push to main or a portfolio
+# review branch that changes a dependency or audit-policy file, so remediation is
+# verified before merge and a new dependency is audited when it arrives.
 #
 # The npm threshold is `high`. Phase 12 recorded two moderate react-router
 # advisories in the client -- one mitigated in code, the other in server-side
@@ -17,7 +18,7 @@ on:
     - cron: '0 7 * * 1' # Mondays 07:00 UTC, an hour after the escalation eval
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'portfolio-week/**']
     paths:
       - 'client/package-lock.json'
       - 'server/package-lock.json'

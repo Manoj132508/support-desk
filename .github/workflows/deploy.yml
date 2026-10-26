@@ -13,7 +13,7 @@ name: Deploy check
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'portfolio-week/**']
   pull_request:
   workflow_dispatch:
 

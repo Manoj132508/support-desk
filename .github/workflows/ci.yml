@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'portfolio-week/**']
   pull_request:
 
 # The repo went public at Phase 1 specifically so this runs DURING the build
