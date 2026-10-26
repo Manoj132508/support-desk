@@ -3,11 +3,12 @@
 The whole system runs with Docker Compose: nginx serving the client, the Express API, the Python
 AI service, and MongoDB as a replica set. The model runs in Ollama on the host.
 
-> **Not built on the development machine.** Docker is not installed there (Phase 1 §8). The images
-> and compose file are built, started and checked by the
-> [Deploy check](.github/workflows/deploy.yml) workflow on GitHub's runners, on every push. What
-> that workflow proves, and what it does not, is in
-> [Phase 15](docs/phases/phase-15-deployment-and-ci.md).
+> **Deployment evidence:** the original Phase 15 verification ran on GitHub's Docker runners.
+> The [Deploy check](.github/workflows/deploy.yml) builds, starts and checks the Compose stack
+> on pushes and pull requests. The documentation refresh on 26 October 2026 reran the
+> lightweight test suites; it did not repeat the heavyweight local image/model build.
+> See [the current evidence record](docs/portfolio-evidence.md) and
+> [Phase 15](docs/phases/phase-15-deployment-and-ci.md) for the scope of those checks.
 
 ---
 
