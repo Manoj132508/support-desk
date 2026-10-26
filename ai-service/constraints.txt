@@ -1,0 +1,5 @@
+# Security floors for transitive runtime packages.
+#
+# Keep direct application dependencies in requirements.txt. Constraints let us
+# patch a transitive package without pretending the application imports it.
+filelock>=4.2.1

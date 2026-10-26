@@ -36,7 +36,7 @@ jobs:
       # was measured with, which the AI image also pins (Phase 15).
       - name: Install
         run: |
-          pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
+          pip install -c constraints.txt torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -c constraints.txt -r requirements.txt
       - name: Run the eval and check for drift
         run: python -m evaluation.run --check

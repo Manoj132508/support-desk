@@ -25,10 +25,11 @@ RUN python -m pip install --upgrade "setuptools>=83.0.0"
 # -- gigabytes the embedder never uses -- and a different torch could change the
 # embeddings the grounding threshold was tuned on. Installed first, so the
 # requirements below find it already satisfied.
-RUN pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+COPY constraints.txt ./
+RUN pip install -c constraints.txt torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt ./
-RUN pip install -r requirements.txt
+RUN pip install -c constraints.txt -r requirements.txt
 
 # THE EMBEDDING MODEL IS BAKED IN, and the hub is switched off afterwards.
 # Project 2 left this optional. Here it is not: the grounding threshold (0.51)
